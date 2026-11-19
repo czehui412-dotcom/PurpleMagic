@@ -98,6 +98,8 @@ public static class Trust
             throw new InvalidDataException("最低登录器版本无效。");
         if (b.Profile.ChannelHistory is { Adapter.Length: > 0 } history &&
             !Regex.IsMatch(history.Adapter, "^[a-z0-9-]{1,64}$")) throw new InvalidDataException("频道兼容方案标识无效。");
+        if (b.Profile.SecondClient is { } secondClient && !secondClient.IsWellFormed())
+            throw new InvalidDataException("双开兼容配置无效。");
         if (b.Content is { } c)
         {
             SignedUpdate.RequireHttps(c.Endpoint);

@@ -53,6 +53,17 @@ type Profile struct {
 	PreviousChannelServerID *int     `json:"PreviousChannelServerId,omitempty"`
 	MinimumLauncherVersion  string   `json:"MinimumLauncherVersion,omitempty"`
 	AntiCheat               any      `json:"AntiCheat,omitempty"`
+
+	SecondClient *SecondClientCompatibility `json:"SecondClient,omitempty"`
+}
+
+// SecondClientCompatibility is the signed, server-delivered allow-list of client
+// EXE hashes approved for the multi-client startup-gate release. It replaces the
+// old compile-time list so a new client EXE only needs a signed profile publication.
+// Absent or disabled means fail-closed.
+type SecondClientCompatibility struct {
+	Enabled         bool     `json:"Enabled"`
+	SupportedHashes []string `json:"SupportedHashes"`
 }
 
 func (p Profile) validateDirectory() error {
@@ -61,6 +72,19 @@ func (p Profile) validateDirectory() error {
 	}
 	if p.ChannelHistory != nil && p.ChannelHistory.Adapter != "" && !regexp.MustCompile(`^[a-z0-9-]{1,64}$`).MatchString(p.ChannelHistory.Adapter) {
 		return errors.New("invalid channel history adapter")
+	}
+	if p.SecondClient != nil {
+		hashes := p.SecondClient.SupportedHashes
+		if len(hashes) < 1 || len(hashes) > 16 {
+			return errors.New("invalid second client hash list")
+		}
+		seen := map[string]bool{}
+		for _, h := range hashes {
+			if !digestPattern.MatchString(h) || seen[strings.ToLower(h)] {
+				return errors.New("invalid or duplicate second client hash")
+			}
+			seen[strings.ToLower(h)] = true
+		}
 	}
 	if p.ChannelServerID < 0 || p.ChannelServerID >= 250 {
 		return errors.New("invalid channel directory identity")

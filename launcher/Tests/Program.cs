@@ -53,6 +53,19 @@ try {
     Check(!PlayerApi.CertificateAllowed(new Uri(profile.ApiUrl),cert,SslPolicyErrors.RemoteCertificateNameMismatch,profile), "wrong certificate name");
     Check(!PlayerApi.CertificateAllowed(new Uri(profile.ApiUrl),cert,SslPolicyErrors.None,profile with {CertificateSha256=new string('0',64)}), "changed certificate");
     Check(!PlayerApi.CertificateAllowed(new Uri("https://other.invalid"),cert,SslPolicyErrors.RemoteCertificateChainErrors,profile), "other host normal validation");
+    // Signed, server-delivered second-client allow-list: fail-closed by default, format-checked, case-insensitive.
+    var sha = new string('a', 64);
+    Check(!new SecondClientCompatibility(false, [sha]).Allows(sha), "second-client disabled fails closed");
+    Check(!new SecondClientCompatibility(true, []).IsWellFormed(), "second-client empty list rejected");
+    Check(!new SecondClientCompatibility(true, [new string('z', 64)]).IsWellFormed(), "second-client bad hash rejected");
+    Check(!new SecondClientCompatibility(true, [sha, sha.ToUpperInvariant()]).IsWellFormed(), "second-client duplicate rejected");
+    Check(!new SecondClientCompatibility(true, [sha, new string('b', 64), new string('c', 64), new string('d', 64), new string('e', 64),
+        new string('f', 64), new string('0', 64), new string('1', 64), new string('2', 64), new string('3', 64),
+        new string('4', 64), new string('5', 64), new string('6', 64), new string('7', 64), new string('8', 64),
+        new string('9', 64), new string('a', 64)]).IsWellFormed(), "second-client too many hashes rejected");
+    Check(new SecondClientCompatibility(true, [sha]).IsWellFormed(), "second-client valid list accepted");
+    Check(new SecondClientCompatibility(true, [sha.ToUpperInvariant()]).Allows(sha), "second-client hash match is case-insensitive");
+    Check(!new SecondClientCompatibility(true, [sha]).Allows(new string('b', 64)), "second-client non-member rejected");
 } finally { Directory.Delete(temporary,true); }
 if (OperatingSystem.IsWindows()) NativeGateChecks.Run(Check, Reject);
 await ChannelProbeChecks.Run(Check, Reject);

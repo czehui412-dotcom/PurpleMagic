@@ -22,6 +22,22 @@ func TestDirectoryProfileValidation(t *testing.T) {
 			t.Fatal("invalid directory accepted")
 		}
 	}
+	// SecondClient allow-list: valid hashes accepted; empty/bad/duplicate/too-many rejected.
+	good := strings.Repeat("a", 64)
+	if err := (Profile{SecondClient: &SecondClientCompatibility{Enabled: true, SupportedHashes: []string{good}}}).validateDirectory(); err != nil {
+		t.Fatal(err)
+	}
+	for _, sc := range []*SecondClientCompatibility{
+		{Enabled: true, SupportedHashes: []string{}},
+		{Enabled: true, SupportedHashes: []string{strings.Repeat("z", 64)}},
+		{Enabled: true, SupportedHashes: []string{good, good}},
+		{Enabled: true, SupportedHashes: []string{good, strings.ToUpper(good)}},
+		{Enabled: true, SupportedHashes: make([]string, 17)},
+	} {
+		if (Profile{SecondClient: sc}).validateDirectory() == nil {
+			t.Fatal("invalid second-client allow-list accepted")
+		}
+	}
 }
 
 func TestDirectoryPublicationPreservesLegacyPayloadAndStagedMigration(t *testing.T) {

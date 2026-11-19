@@ -4,6 +4,19 @@ using System.Text.RegularExpressions;
 
 namespace ServerS5A3;
 
+// Signed, server-delivered allow-list for the native multi-client startup-gate release.
+// Replaces the old compile-time hash list so a new client EXE only needs a signed
+// profile publication, not a rebuilt launcher. Absent/disabled means fail-closed.
+public sealed record SecondClientCompatibility(bool Enabled, string[] SupportedHashes)
+{
+    public const int MaxHashes = 16;
+    public bool Allows(string sha256) => Enabled && SupportedHashes is { Length: > 0 } &&
+        SupportedHashes.Any(value => value.Equals(sha256, StringComparison.OrdinalIgnoreCase));
+    public bool IsWellFormed() => SupportedHashes is { Length: > 0 and <= MaxHashes } &&
+        SupportedHashes.All(value => value is not null && System.Text.RegularExpressions.Regex.IsMatch(value, "^[0-9a-fA-F]{64}$")) &&
+        SupportedHashes.Distinct(StringComparer.OrdinalIgnoreCase).Count() == SupportedHashes.Length;
+}
+
 public sealed record PlayerProfile(string ApiUrl, string CertificateSha256, string UpdatePublicKey,
     string SettingsUrl, string GameHost, int BootstrapPort, string ExeSha256, string PvfSha256, string DefaultClientDirectory)
 {
@@ -12,6 +25,7 @@ public sealed record PlayerProfile(string ApiUrl, string CertificateSha256, stri
     public bool EnableQQBinding { get; init; } = false;
     public bool RequireQQBinding { get; init; } = false;
     public AntiCheatPolicy? AntiCheat { get; init; }
+    public SecondClientCompatibility? SecondClient { get; init; }
     public int ChannelServerId { get; init; }
     // Explicit temporary compatibility during a staged server migration.
     public int? PreviousChannelServerId { get; init; }

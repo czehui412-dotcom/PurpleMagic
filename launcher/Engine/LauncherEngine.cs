@@ -393,7 +393,7 @@ public sealed class LauncherEngine : IDisposable
             try
             {
                 if (running.Length >= 2) throw new InvalidOperationException("最多同时运行两个游戏客户端。");
-                if (running.Length == 1) NativeClientGate.PrepareSecondClient(running[0], executable, Profile.ExeSha256);
+                if (running.Length == 1) NativeClientGate.PrepareSecondClient(running[0], executable, Profile);
             }
             finally { foreach (var process in running) process.Dispose(); }
             var start = new ProcessStartInfo(executable) { UseShellExecute = false, WorkingDirectory = preferences.ClientDirectory, Arguments = GameContract.Arguments(reply.Token ?? "", Profile.GameHost, Profile.BootstrapPort) };

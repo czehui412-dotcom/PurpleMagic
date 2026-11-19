@@ -56,12 +56,30 @@ def validate_anticheat(policy):
     require(all(sha(value) for value in policy.get('AllowedModuleHashes', [])))
 
 
+def validate_second_client(policy):
+    if policy is None:
+        return
+    def require(ok):
+        if not ok:
+            raise ValueError('Invalid SecondClient policy; hashes must be 1-16 unique 64-hex SHA256 values')
+    require(isinstance(policy, dict))
+    require(not set(policy) - {'Enabled', 'SupportedHashes'})
+    require(type(policy.get('Enabled', False)) is bool)
+    hashes = policy.get('SupportedHashes', [])
+    require(isinstance(hashes, list) and 1 <= len(hashes) <= 16)
+    lowered = [value.lower() for value in hashes]
+    require(all(isinstance(value, str) and re.fullmatch(r'[a-fA-F0-9]{64}', value) for value in hashes))
+    require(len(set(lowered)) == len(lowered))
+
+
 def build(connection, client, certificate, public_key):
     allowed = {'ApiUrl', 'SettingsUrl', 'GameHost', 'BootstrapPort', 'ChannelServerId',
-               'PreviousChannelServerId', 'ChannelHistory', 'MinimumLauncherVersion', 'DefaultClientDirectory', 'AntiCheat'}
+               'PreviousChannelServerId', 'ChannelHistory', 'MinimumLauncherVersion', 'DefaultClientDirectory',
+               'AntiCheat', 'SecondClient'}
     if set(connection) - allowed:
         raise ValueError('Unknown connection fields; use launcher/server.example.json')
     validate_anticheat(connection.get('AntiCheat'))
+    validate_second_client(connection.get('SecondClient'))
     api = urlsplit(connection['ApiUrl'])
     if api.scheme != 'https' or not api.hostname or api.username or api.path or api.query or api.fragment:
         raise ValueError('ApiUrl must be an HTTPS origin')
