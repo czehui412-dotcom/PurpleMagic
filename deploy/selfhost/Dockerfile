@@ -1,12 +1,13 @@
 FROM node:24-bookworm-slim AS console
 WORKDIR /src/gm-console
 COPY gm-console/package*.json ./
-RUN npm ci --no-audit --fund=false
+RUN npm config set registry https://registry.npmmirror.com && npm ci --no-audit --fund=false
 COPY gm-console/ ./
 RUN npm run build
 
 FROM golang:1.26.5-bookworm AS build
-ENV CGO_ENABLED=0 GOWORK=off
+# mirror patch: containers cannot reach proxy.golang.org / npmjs from CN network
+ENV CGO_ENABLED=0 GOWORK=off GOPROXY=https://goproxy.cn,direct
 WORKDIR /src/gateway
 COPY gateway/go.mod gateway/go.sum ./
 RUN go mod download
@@ -21,7 +22,8 @@ COPY gm/ ./
 RUN go build -mod=readonly -trimpath -ldflags="-s -w" -o /out/GMTool ./cmd/gmtool
 
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && \
+RUN sed -i 's@deb.debian.org@mirrors.ustc.edu.cn@g' /etc/apt/sources.list.d/debian.sources 2>/dev/null; \
+    apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && \
     rm -rf /var/lib/apt/lists/*
 COPY --from=build /out/ /opt/purplemagic/bin/
 COPY --from=console /src/gm-console/dist/ /opt/purplemagic/web/
