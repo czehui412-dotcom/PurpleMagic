@@ -26,7 +26,7 @@ export function BenefitReconciliation() {
   const date = (s: string) => new Date(s).toLocaleString("zh-CN", { hour12: false });
   return <div className="glass benefit-reconciliation" role="status">
     {status?.status === "active" && <RefreshCw size={15} className="is-spinning" />}
-    <strong>每 3 小时自动校验</strong><span>包含新账号、老账号的新角色，按原规则补齐</span>
+    <strong>新账号与新角色 15 秒内自动发放</strong><span>存量与失败补发由后台每 3 小时兜底校验</span>
     {status && <span>{!status.enabled ? "后台校验已暂停" : status.status === "active" ? `校验中 · 已检查 ${status.checked} 项` : status.nextAt ? `下次 ${date(status.nextAt)}` : "等待首次校验"}</span>}
     {status?.completedAt && <span>上轮完成 {date(status.completedAt)}</span>}
     {status && status.blocked?.length > 0 && <span>有 {status.blocked.length} 条规则的物品版本待核对</span>}

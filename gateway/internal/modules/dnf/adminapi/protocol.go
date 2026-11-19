@@ -12,6 +12,46 @@ import (
 const Version = 1
 const Path = "/api/game/admin"
 
+// 注册限制管理（registration_* action）：邀请码增删查 + 注册记录 + 机器码/IP 解绑。
+// 字段与 ServerS5A3 的 adminapi 协议保持同步。
+type RegistrationQuery struct {
+	Limit  int `json:"limit,omitempty"`
+	Offset int `json:"offset,omitempty"`
+}
+
+type RegistrationInviteChange struct {
+	Op          string `json:"op,omitempty"`
+	Code        string `json:"code,omitempty"`
+	Count       int    `json:"count,omitempty"`
+	MaxUses     int    `json:"maxUses,omitempty"`
+	ExpiresDays int    `json:"expiresDays,omitempty"`
+	Note        string `json:"note,omitempty"`
+}
+
+type RegistrationUnbind struct {
+	Kind  string `json:"kind,omitempty"`
+	Value string `json:"value,omitempty"`
+}
+
+type RegistrationInvite struct {
+	Code      string `json:"code"`
+	MaxUses   int    `json:"maxUses"`
+	Used      int    `json:"used"`
+	ExpiresAt string `json:"expiresAt,omitempty"`
+	Revoked   bool   `json:"revoked,omitempty"`
+	Note      string `json:"note,omitempty"`
+	CreatedAt string `json:"createdAt"`
+}
+
+type RegistrationRecord struct {
+	AccountID string `json:"accountId"`
+	Account   string `json:"account,omitempty"`
+	IP        string `json:"ip,omitempty"`
+	Device    string `json:"device,omitempty"`
+	Invite    string `json:"invite,omitempty"`
+	CreatedAt string `json:"createdAt,omitempty"`
+}
+
 type Request struct {
 	InventoryEdit   *InventoryEditRequest       `json:"inventoryEdit,omitempty"`
 	QQChange        *qqbinding.Change           `json:"qqChange,omitempty"`
@@ -33,6 +73,10 @@ type Request struct {
 	ListType        byte                        `json:"listType,omitempty"`
 	Slot            int16                       `json:"slot,omitempty"`
 	Stack           *repository.ItemStack       `json:"stack,omitempty"`
+	// 注册限制管理（registration_* action）。
+	RegistrationQuery  *RegistrationQuery        `json:"registrationQuery,omitempty"`
+	RegistrationInvite *RegistrationInviteChange `json:"registrationInvite,omitempty"`
+	RegistrationUnbind *RegistrationUnbind       `json:"registrationUnbind,omitempty"`
 }
 
 type Response struct {
@@ -62,4 +106,10 @@ type Response struct {
 	PremiumTypes       []int64                      `json:"premiumTypes,omitempty"`
 	CrystalCubeItemIDs [6]int64                     `json:"crystalCubeItemIds,omitempty"`
 	StackRow           []byte                       `json:"stackRow,omitempty"`
+	// 注册限制管理结果。
+	RegistrationInvites []RegistrationInvite `json:"registrationInvites,omitempty"`
+	RegistrationRecords []RegistrationRecord `json:"registrationRecords,omitempty"`
+	RegistrationCodes   []string             `json:"registrationCodes,omitempty"`
+	RegistrationChanged bool                 `json:"registrationChanged,omitempty"`
+	RegistrationTotal   int                  `json:"registrationTotal,omitempty"`
 }

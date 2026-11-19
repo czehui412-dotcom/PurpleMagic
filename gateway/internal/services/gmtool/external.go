@@ -88,7 +88,15 @@ func (s *Server) GatewayHandler(token, hash string) http.Handler {
 		}
 		api.ServeHTTP(w, r)
 	}))
-	return diagnostics.Wrap("game-gateway", s.cfg.Logger, servicehttp.Protect(token, hash, mux))
+	protected := diagnostics.Wrap("game-gateway", s.cfg.Logger, servicehttp.Protect(token, hash, mux))
+	// 注册账号 / 创建角色触发的即时福利投递走独立 Bearer secret，不要求 PVF 哈希头。
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == directBenefitDeliverPath {
+			s.handleDirectBenefitDelivery(w, r)
+			return
+		}
+		protected.ServeHTTP(w, r)
+	})
 }
 
 // ExternalHandler owns browser authentication, static catalog queries, and the
