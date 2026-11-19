@@ -13,16 +13,23 @@ namespace ServerS5A3;
 // This compatibility action is limited to one verified client, never system-wide handles.
 public static class NativeClientGate
 {
-    private const string SupportedHash = "BC613E368E8FD49C50C35163F2ED8A28564FC23342701A5A6C22B839F3BF6B7A";
+    // 双开兼容的客户端 EXE 白名单：BC613E36 = 上游 v56 启动 build；
+    // 28E04D1D = 当前测试服 EXE（配合 ijl15 双开代理，启动互斥体已被剥名，
+    // 此处 gate release 找不到目标 mutant 时返回 0，无副作用）。
+    private static readonly HashSet<string> SupportedHashes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "BC613E368E8FD49C50C35163F2ED8A28564FC23342701A5A6C22B839F3BF6B7A",
+        "28E04D1D1C148C841318D533ED8CCB3E426BA5A5F24328B3C913B81303B12A84",
+    };
     private const string GateName = "dbefeuate_ccen_khxfor_lcar_blr";
 
     public static int PrepareSecondClient(Process existing, string executable, string expectedHash)
     {
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
-        if (!expectedHash.Equals(SupportedHash, StringComparison.OrdinalIgnoreCase))
+        if (!SupportedHashes.Contains(expectedHash))
             throw new InvalidDataException("此客户端版本尚未验证双开兼容性。");
         using var file = File.OpenRead(executable);
-        if (!Convert.ToHexString(SHA256.HashData(file)).Equals(SupportedHash, StringComparison.OrdinalIgnoreCase))
+        if (!SupportedHashes.Contains(Convert.ToHexString(SHA256.HashData(file))))
             throw new InvalidDataException("客户端文件已改变，请恢复匹配版本后重试。");
         return ReleaseExactMutex(existing.Id, existing.StartTime.ToUniversalTime().ToFileTimeUtc(), executable, GateName);
     }
