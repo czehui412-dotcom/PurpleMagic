@@ -38,3 +38,7 @@ node_modules/
 /gmindex/
 pm_gateway_src.tgz
 *.bak
+
+# Flutter/Go 构建缓存
+.dart_tool/
+launcher/**/build/
