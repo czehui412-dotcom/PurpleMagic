@@ -85,7 +85,7 @@ def main():
     inputs = ROOT / "runtime/flutter-build/portable-input"
     metadata = prepare(args.bundle.resolve(), inputs, args.version, args.icon.resolve())
     build = ROOT / "runtime/flutter-build/portable"
-    subprocess.run([str(args.dotnet), "publish", str(ROOT / "launcher/Portable/Launcher.Portable.csproj"), "-c", "Release", "-r", "win-x64", "-p:PortableInput=" + str(inputs), "-p:Version=" + args.version, "-o", str(build)], cwd=ROOT, check=True)
+    subprocess.run([str(args.dotnet), "publish", str(ROOT / "launcher/Portable/Launcher.Portable.csproj"), "-c", "Release", "-r", "win-x64", "-p:PortableInput=" + str(inputs), "-p:Version=" + args.version, "-p:NuGetAudit=false", "-o", str(build)], cwd=ROOT, check=True)
     output.parent.mkdir(parents=True, exist_ok=True)
     # Exclusive creation also protects an output created while compilation runs.
     with output.open("xb") as destination, (build / "PurpleMagic.exe").open("rb") as source:

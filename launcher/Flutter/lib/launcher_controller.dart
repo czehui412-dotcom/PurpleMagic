@@ -155,11 +155,31 @@ class LauncherController extends ChangeNotifier {
     return remaining > 0 ? remaining : 0;
   }
 
+  // CDK 兑换码：账号密码在服务端验证（dnfbridge /api/cdk/*）。
+  Future<Map<String, dynamic>> cdkCharacters(String account, String password) =>
+      client.call('cdkCharacters', {
+        'account': account.trim(),
+        'password': password,
+      });
+
+  Future<Map<String, dynamic>> redeemCdk(
+    String account,
+    String password,
+    String code,
+    String characterId,
+  ) => client.call('redeemCdk', {
+    'account': account.trim(),
+    'password': password,
+    'code': code.trim(),
+    'characterId': characterId,
+  });
+
   Future<Map<String, dynamic>> _accountCall(
     String method,
     String account,
     String password, [
     String newPassword = '',
+    String invite = '',
   ]) async {
     final remaining = accountCooldown(account);
     if (remaining > 0) {
@@ -174,6 +194,7 @@ class LauncherController extends ChangeNotifier {
         'account': account.trim(),
         'password': password,
         'newPassword': newPassword,
+        if (invite.isNotEmpty) 'invite': invite,
       });
     } on AccountFailure catch (error) {
       if (error.retryAfter > 0) {
@@ -422,8 +443,14 @@ class LauncherController extends ChangeNotifier {
     }
   }
 
-  Future<void> submit(bool register, String account, String password) async {
-    await _accountCall(register ? 'register' : 'login', account, password);
+  Future<void> submit(
+    bool register,
+    String account,
+    String password, [
+    String invite = '',
+  ]) async {
+    await _accountCall(register ? 'register' : 'login', account, password,
+        '', invite);
   }
 
   Future<bool> updateLauncher() async {

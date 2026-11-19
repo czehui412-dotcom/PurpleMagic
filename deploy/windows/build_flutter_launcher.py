@@ -55,11 +55,20 @@ def main():
         git_rev = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     except Exception:
         git_rev = "unknown"
-    run([args.dotnet, "publish", "launcher/Host/Launcher.Host.csproj", "-c", "Release", "-r", "win-x64", "-p:AntiCheat=" + str(args.anticheat).lower(), "-p:LauncherInput=" + str(profile), "-p:SourceRevisionId=" + git_rev, "-o", core])
+    run([args.dotnet, "publish", "launcher/Host/Launcher.Host.csproj", "-c", "Release", "-r", "win-x64", "-p:AntiCheat=" + str(args.anticheat).lower(), "-p:NuGetAudit=false", "-p:LauncherInput=" + str(profile), "-p:SourceRevisionId=" + git_rev, "-o", core])
     if subprocess.check_output([str(core / 'DNF90.Core.exe'), '--build-flavor'], text=True).strip() != flavor:
         raise RuntimeError('Compiled core flavor mismatch')
     flutter = args.flutter / "bin/flutter.bat"
     run([flutter, "--no-version-check", "--suppress-analytics", "pub", "get", "--offline"], project)
+    # flutter347 plugin refresh on junction paths wipes the wrapper sources it
+    # just unpacked (only include/ survives); restore them before the build.
+    wrapper_src = args.flutter / "bin/cache/artifacts/engine/windows-x64/cpp_client_wrapper"
+    wrapper_dst = project / "windows/flutter/ephemeral/cpp_client_wrapper"
+    if (wrapper_src / "standard_codec.cc").is_file() and not (wrapper_dst / "standard_codec.cc").is_file():
+        wrapper_dst.mkdir(parents=True, exist_ok=True)
+        for item in wrapper_src.iterdir():
+            if item.is_file():
+                shutil.copy2(item, wrapper_dst / item.name)
     run([flutter, "--no-version-check", "--suppress-analytics", "build", "windows", "--release", "--no-pub"], project)
     run([cmake, "-S", ROOT / "launcher/Bootstrap", "-B", bootstrap, "-G", "Visual Studio 17 2022", "-A", "x64", "-DCMAKE_GENERATOR_INSTANCE=" + str(vs)])
     run([cmake, "--build", bootstrap, "--config", "Release"])

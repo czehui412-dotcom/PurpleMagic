@@ -100,6 +100,39 @@ HRESULT ChooseDirectory(HWND owner, const flutter::EncodableValue* arguments,
   CoTaskMemFree(path);
   return hr;
 }
+
+// CDK 批量兑换：选择含兑换码的文本文件。
+HRESULT ChooseFile(HWND owner, const flutter::EncodableValue* arguments,
+                   std::string* selected) {
+  Microsoft::WRL::ComPtr<IFileOpenDialog> dialog;
+  HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr,
+      CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog));
+  if (FAILED(hr)) return hr;
+  DWORD options = 0;
+  hr = dialog->GetOptions(&options);
+  if (FAILED(hr)) return hr;
+  hr = dialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST |
+                         FOS_PATHMUSTEXIST | FOS_NOCHANGEDIR);
+  if (FAILED(hr)) return hr;
+  dialog->SetTitle(L"PurpleMagic — 选择 CDK 批量兑换文件");
+  dialog->SetOkButtonLabel(L"选择");
+  static const COMDLG_FILTERSPEC kFilters[] = {
+      {L"文本文件 (*.txt)", L"*.txt"},
+      {L"所有文件 (*.*)", L"*.*"},
+  };
+  dialog->SetFileTypes(2, kFilters);
+  dialog->SetFileTypeIndex(1);
+  hr = dialog->Show(owner);
+  if (FAILED(hr)) return hr;
+  Microsoft::WRL::ComPtr<IShellItem> item;
+  hr = dialog->GetResult(&item);
+  if (FAILED(hr)) return hr;
+  PWSTR path = nullptr;
+  hr = item->GetDisplayName(SIGDN_FILESYSPATH, &path);
+  if (SUCCEEDED(hr)) *selected = Utf8FromUtf16(path);
+  CoTaskMemFree(path);
+  return hr;
+}
 }  // namespace
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
@@ -147,10 +180,12 @@ bool FlutterWindow::OnCreate() {
         const auto window = GetHandle();
         const auto& name = call.method_name();
         if (name == "chooseDirectory" || name == "saveDiagnosticLog" ||
-            name == "saveDiagnosticBundle") {
+            name == "saveDiagnosticBundle" || name == "chooseFile") {
           std::string selected;
           const HRESULT hr = name == "chooseDirectory"
               ? ChooseDirectory(window, call.arguments(), &selected)
+              : name == "chooseFile"
+              ? ChooseFile(window, call.arguments(), &selected)
               : SaveDiagnosticFile(window, call.arguments(),
                                    name == "saveDiagnosticBundle", &selected);
           if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED)) {

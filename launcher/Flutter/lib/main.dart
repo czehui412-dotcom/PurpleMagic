@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui';
 
@@ -110,13 +111,25 @@ class _PreviewHomeState extends State<PreviewHome> {
   late final LauncherController model =
       widget.controller ?? LauncherController();
   final account = TextEditingController(),
-      password = TextEditingController(),
-      confirmation = TextEditingController();
+  password = TextEditingController(),
+  confirmation = TextEditingController(),
+  invite = TextEditingController(), // 注册邀请码（网吧等共享出口场景，选填）
+  cdkCode = TextEditingController(),
+  cdkAccount = TextEditingController(),
+  cdkPassword = TextEditingController();
   int accountTab = 0;
   bool get registering => accountTab == 1;
   bool remember = true, submitting = false, securityBusy = false;
-  int category = 0, featured = 0;
+  int category = 0;
   String error = '', directory = '';
+  List<Map<String, dynamic>> cdkCharacters = [];
+  String? cdkSelectedCharacter;
+  bool cdkBusy = false;
+  bool cdkPicking = false;
+  List<String> cdkLog = [];
+  // 文件批量模式：选文件后码存这里，输入框显示文件名；手动输入自动切回单码。
+  List<String> cdkFileCodes = [];
+  final ScrollController cdkLogScroll = ScrollController();
   @override
   void initState() {
     super.initState();
@@ -176,6 +189,10 @@ class _PreviewHomeState extends State<PreviewHome> {
     account.dispose();
     password.dispose();
     confirmation.dispose();
+    invite.dispose();
+    cdkAccount.dispose();
+    cdkPassword.dispose();
+    cdkLogScroll.dispose();
     if (widget.controller == null) {
       model.dispose();
     }
@@ -374,7 +391,6 @@ class _PreviewHomeState extends State<PreviewHome> {
   );
 
   Widget _announcements() {
-    const titles = ['重返阿拉德\n再启冒险征程', '熟悉的世界\n等待再次相遇', '准备就绪\n开启你的旅程'];
     return Glass(
       solid: model.reducedEffects,
       radius: 22,
@@ -382,117 +398,6 @@ class _PreviewHomeState extends State<PreviewHome> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          SizedBox(
-            height: 175,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                Image.asset('assets/announcement.webp', fit: BoxFit.cover),
-                const DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        Color(0xd91a1525),
-                        Color(0x651a1525),
-                        Color(0x221a1525),
-                      ],
-                    ),
-                  ),
-                ),
-                Positioned.fill(
-                  child: Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      key: const Key('featured-news'),
-                      onTap: () => _article(
-                        titles[featured].replaceAll('\n', ' · '),
-                        '冒险从这里开始。\n\n选择配套客户端，完成版本检查后即可登录。服务器发布的公告显示在下方列表中。',
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(25, 21, 25, 20),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'DUNGEON & FIGHTER',
-                              style: TextStyle(
-                                fontSize: 9,
-                                letterSpacing: 3.1,
-                                fontWeight: FontWeight.w700,
-                                color: gold,
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            Text(
-                              titles[featured],
-                              style: const TextStyle(
-                                fontSize: 27,
-                                height: 1.33,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: 1,
-                              ),
-                            ),
-                            const Spacer(),
-                            const Row(
-                              children: [
-                                Text(
-                                  '阿拉德，久别重逢',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: Color(0xffded4e6),
-                                  ),
-                                ),
-                                Spacer(),
-                                Icon(
-                                  Icons.arrow_forward_rounded,
-                                  size: 17,
-                                  color: gold,
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                Positioned(
-                  bottom: 17,
-                  left: 195,
-                  child: Row(
-                    children: List.generate(
-                      3,
-                      (i) => Semantics(
-                        label: '公告推荐 ${i + 1}',
-                        button: true,
-                        selected: featured == i,
-                        child: InkWell(
-                          onTap: () => setState(() => featured = i),
-                          child: SizedBox(
-                            width: 24,
-                            height: 22,
-                            child: Center(
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 160),
-                                width: featured == i ? 17 : 5,
-                                height: 4,
-                                decoration: BoxDecoration(
-                                  color: featured == i
-                                      ? gold
-                                      : const Color(0x75d1c8db),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 8, 20, 14),
             child: Column(
@@ -509,7 +414,26 @@ class _PreviewHomeState extends State<PreviewHome> {
                           compact: true,
                         ),
                       ),
+                    const SizedBox(width: 6),
+                    TextButton.icon(
+                      key: const Key('cdk-entry'),
+                      onPressed: _cdkDialog,
+                      icon: const Icon(Icons.redeem_rounded,
+                          size: 14, color: gold),
+                      label: const Text('CDK 兑换',
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: gold)),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        minimumSize: const Size(0, 28),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
                     const Spacer(),
+                    _icon(Icons.redeem_rounded, 'CDK 兑换', _cdkDialog, small: true),
+                    const SizedBox(width: 8),
                     _icon(Icons.add_rounded, '更多公告', _newsCenter, small: true),
                   ],
                 ),
@@ -554,6 +478,406 @@ class _PreviewHomeState extends State<PreviewHome> {
       ),
     );
   }
+
+  // CDK 兑换弹窗：独立账号密码（打开时预填登录面板的值），支持单码与文件批量兑换。
+  Future<void> _cdkDialog() async {
+    if (cdkAccount.text.isEmpty && account.text.trim().isNotEmpty) {
+      cdkAccount.text = account.text;
+    }
+    if (cdkPassword.text.isEmpty && password.text.isNotEmpty) {
+      cdkPassword.text = password.text;
+    }
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, update) => AlertDialog(
+          title: const Text('CDK 兑换'),
+          content: SizedBox(width: 560, child: _cdkForm(update)),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('关闭'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _cdkField(
+    TextEditingController controller,
+    String hint, {
+    bool secret = false,
+    VoidCallback? onUserEdit,
+  }) => TextField(
+    controller: controller,
+    obscureText: secret,
+    onChanged: onUserEdit == null ? null : (_) => onUserEdit(),
+    style: const TextStyle(color: ink, fontSize: 13),
+    decoration: InputDecoration(
+      hintText: hint,
+      hintStyle: const TextStyle(color: muted, fontSize: 12),
+      isDense: true,
+      filled: true,
+      fillColor: const Color(0x14201928),
+      contentPadding:
+          const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: Color(0x59e8e1f7), width: 1),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: Color(0x59e8e1f7), width: 1),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: gold, width: 1.2),
+      ),
+    ),
+  );
+
+  Widget _cdkForm(void Function(VoidCallback) update) {
+    final characters = cdkCharacters;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '点券兑换直接入账，道具与装备通过游戏内邮箱发放。单码直接填入，批量可粘贴多行或选择文件。',
+          style: TextStyle(color: muted, fontSize: 11),
+        ),
+        const SizedBox(height: 10),
+        // 行1：角色选择 + 查询角色
+        Row(
+          children: [
+            Expanded(
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0x14201928),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0x59e8e1f7)),
+                ),
+                child: DropdownButton<String>(
+                value: cdkSelectedCharacter,
+                isExpanded: true,
+                dropdownColor: const Color(0xff2b2338),
+                underline: const SizedBox.shrink(),
+                itemHeight: 40,
+                menuMaxHeight: 320,
+                icon: const Icon(Icons.expand_more,
+                    size: 18, color: muted),
+                hint: Text(
+                    characters.isEmpty ? '先查询角色' : '选择兑换角色',
+                    style: const TextStyle(color: muted, fontSize: 12)),
+                style: const TextStyle(color: Colors.white, fontSize: 13),
+                items: [
+                  for (final c in characters)
+                    DropdownMenuItem(
+                      value: c['characterId'] as String?,
+                      child: Row(
+                        children: [
+                          if (c['characterId'] == cdkSelectedCharacter)
+                            const Icon(Icons.check,
+                                size: 15, color: gold),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              '${c['name']}',
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: c['characterId'] == cdkSelectedCharacter
+                                    ? gold
+                                    : Colors.white,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 7, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: const Color(0x26e3cfa9),
+                              borderRadius: BorderRadius.circular(9),
+                            ),
+                            child: Text(
+                              'Lv.${c['level']}',
+                              style: const TextStyle(
+                                  color: gold, fontSize: 10),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+                selectedItemBuilder: (context) => [
+                  for (final c in characters)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text('${c['name']}',
+                              overflow: TextOverflow.ellipsis),
+                        ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 7, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: const Color(0x26e3cfa9),
+                            borderRadius: BorderRadius.circular(9),
+                          ),
+                          child: Text('Lv.${c['level']}',
+                              style: const TextStyle(
+                                  color: gold, fontSize: 10)),
+                        ),
+                      ],
+                    ),
+                ],
+                onChanged: (v) => update(() => cdkSelectedCharacter = v),
+                isDense: true,
+              ),
+            ),
+            ),
+            const SizedBox(width: 10),
+            _ghostButton(
+              cdkBusy ? '…' : '查询角色',
+              cdkBusy ? null : () => _loadCdkCharacters(update),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        // 行2：账号密码（打开时已预填登录面板的值）
+        Row(
+          children: [
+            Expanded(child: _cdkField(cdkAccount, '账号')),
+            const SizedBox(width: 8),
+            Expanded(child: _cdkField(cdkPassword, '密码', secret: true)),
+          ],
+        ),
+        const SizedBox(height: 10),
+        // 行3：兑换码 + 批量文件 + 兑换
+        Row(
+          children: [
+            Expanded(
+              child: _cdkField(
+                cdkCode,
+                '兑换码 XXXX-XXXX-XXXX-XXXX-XXXX',
+                // 用户手动编辑时退出文件批量模式（程序写入文件名不触发）。
+                onUserEdit: () => update(() {
+                  if (cdkFileCodes.isEmpty) return;
+                  cdkFileCodes = [];
+                }),
+              ),
+            ),
+            const SizedBox(width: 8),
+            _ghostButton(
+              cdkPicking ? '…' : '批量',
+              cdkPicking || cdkBusy ? null : () => _pickCdkFile(update),
+            ),
+            const SizedBox(width: 8),
+            _ghostButton(
+              cdkBusy ? '…' : '兑换',
+              cdkBusy ? null : () => _redeemCdk(update),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        // 兑换日志
+        if (cdkLog.isNotEmpty)
+          Container(
+            height: 150,
+            width: double.infinity,
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0x14201928),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: ListView(
+              controller: cdkLogScroll,
+              shrinkWrap: true,
+              children: [
+                for (final line in cdkLog)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 1.5),
+                    child: Text(
+                      line,
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: line.contains('成功')
+                              ? gold
+                              : line.contains('失败')
+                                  ? Colors.redAccent
+                                  : muted),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  void _cdkLogAdd(void Function(VoidCallback) update, String line) {
+    update(() =>
+        cdkLog = [...cdkLog, '${DateTime.now().toString().substring(11, 19)}  $line']);
+    // 新日志追加在底部，自动贴底保持最新可见。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (cdkLogScroll.hasClients) {
+        cdkLogScroll.jumpTo(cdkLogScroll.position.maxScrollExtent);
+      }
+    });
+  }
+
+  // 从粘贴/导入文本中提取兑换码：兼容新格式「XXXX-XXXX-XXXX-XXXX-XXXX」
+  // 与旧格式「PM-XXXXXXXXXXXX」（GM 导出行「,码\t名称」、纯码行、逗号/空白分隔
+  // 均可直接粘贴），自动去重（服务端同码同账号也会拒绝重复兑换）。
+  static final RegExp _cdkPattern = RegExp(
+      r'PM-[A-HJ-NP-Z1-9]{12}|[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){4}');
+  List<String> _parseCdkCodes(String raw) => [
+    for (final m in _cdkPattern.allMatches(raw.toUpperCase())) m.group(0)!,
+  ];
+
+  Future<void> _loadCdkCharacters(void Function(VoidCallback) update) async {
+    final acc = cdkAccount.text.trim();
+    final pass = cdkPassword.text;
+    if (acc.isEmpty || pass.isEmpty) {
+      _cdkLogAdd(update, '查询失败：请先填写账号和密码。');
+      return;
+    }
+    update(() {
+      cdkBusy = true;
+      cdkCharacters = [];
+    });
+    try {
+      final reply = await model.cdkCharacters(acc, pass);
+      // Host 把结果包在 Response.cdkCharacters 里（见 Program.cs），先解包。
+      final payload = (reply['cdkCharacters'] as Map?) ?? const {};
+      final characters = [
+        for (final c in ((payload['characters'] as List?) ?? []))
+          Map<String, dynamic>.from(c as Map),
+      ];
+      update(() {
+        cdkCharacters = characters;
+        cdkSelectedCharacter =
+            characters.isNotEmpty ? characters.first['characterId'] as String? : null;
+      });
+      _cdkLogAdd(update,
+          characters.isEmpty ? '查询成功：该账号暂无角色。' : '查询成功：${characters.length} 个角色。');
+    } catch (e) {
+      _cdkLogAdd(update, '查询失败：${_friendly(e)}');
+    } finally {
+      update(() => cdkBusy = false);
+    }
+  }
+
+  Future<void> _redeemCdk(void Function(VoidCallback) update) async {
+    final acc = cdkAccount.text.trim();
+    final pass = cdkPassword.text;
+    final codes =
+        cdkFileCodes.isNotEmpty ? cdkFileCodes : _parseCdkCodes(cdkCode.text);
+    if (acc.isEmpty || pass.isEmpty) {
+      _cdkLogAdd(update, '兑换失败：请先填写账号和密码。');
+      return;
+    }
+    if (cdkSelectedCharacter == null) {
+      _cdkLogAdd(update, '兑换失败：请先查询并选择兑换角色。');
+      return;
+    }
+    if (codes.isEmpty) {
+      _cdkLogAdd(update, '兑换失败：请输入兑换码。');
+      return;
+    }
+    update(() => cdkBusy = true);
+    var succeeded = 0;
+    try {
+      for (final code in codes) {
+        try {
+          final reply = await model.redeemCdk(
+              acc, pass, code, cdkSelectedCharacter!);
+          // Host 把结果包在 Response.cdkResult 里（见 Program.cs），先解包并核对 ok。
+          final result = (reply['cdkResult'] as Map?) ?? const {};
+          if (result['ok'] != true) {
+            throw Exception(
+                (result['message'] as String?) ?? '兑换失败，请稍后再试。');
+          }
+          final detail = switch (result['kind'] as String?) {
+            'cera' => '点券 ${result['cera']} 已入账',
+            'equipment' => '装备已发至邮箱',
+            _ => '道具 ×${result['itemCount']} 已发至邮箱',
+          };
+          _cdkLogAdd(update, '$code 成功：$detail');
+          succeeded++;
+        } catch (e) {
+          _cdkLogAdd(update, '$code 失败：${_friendly(e)}');
+        }
+      }
+      _cdkLogAdd(update, '—— 批量完成：成功 $succeeded / ${codes.length} ——');
+      if (succeeded == codes.length) {
+      update(() {
+        cdkCode.clear();
+        cdkFileCodes = [];
+      });
+    }
+    } finally {
+      update(() => cdkBusy = false);
+    }
+  }
+
+  Future<void> _pickCdkFile(void Function(VoidCallback) update) async {
+    if (cdkPicking) return;
+    cdkPicking = true;
+    try {
+      final selected = await platform.invokeMethod<String>('chooseFile');
+      if (selected == null || selected.isEmpty) return;
+      final text = await File(selected).readAsString();
+      final codes = _parseCdkCodes(text);
+      if (codes.isEmpty) {
+        _cdkLogAdd(update, '批量失败：文件中没有有效兑换码（每行一个）。');
+        return;
+      }
+      final name = selected.split(RegExp(r'[\\/]')).last;
+      update(() {
+        cdkFileCodes = codes;
+        cdkCode.text = '[批量文件] $name（${codes.length} 个码）';
+      });
+      _cdkLogAdd(update, '已从文件载入 ${codes.length} 个兑换码，点击「兑换」开始。');
+    } on PlatformException catch (failure) {
+      _cdkLogAdd(update, '批量失败：${failure.message ?? '无法打开文件选择器'}');
+    } catch (e) {
+      _cdkLogAdd(update, '批量失败：${_friendly(e)}');
+    } finally {
+      cdkPicking = false;
+    }
+  }
+
+  String _friendly(Object e) =>
+      e.toString().replaceFirst(RegExp(r'^[A-Za-z]+(\.\w+)?:\s*'), '');
+
+  Widget _ghostButton(String label, VoidCallback? onTap) => Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(10),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+            decoration: BoxDecoration(
+              color: onTap == null
+                  ? const Color(0x18ffffff)
+                  : const Color(0x2bffd45f),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0x33ffd45f)),
+            ),
+            child: Text(label,
+                style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xffffd45f))),
+          ),
+        ),
+      );
 
   Widget _news(
     String tag,
@@ -698,6 +1022,15 @@ class _PreviewHomeState extends State<PreviewHome> {
                 Icons.lock_outline_rounded,
                 'confirmation',
                 secret: true,
+                toggle: false,
+              ),
+              const SizedBox(height: 14),
+              _field(
+                '邀请码（选填）',
+                '无需填写',
+                invite,
+                Icons.redeem_outlined,
+                'off',
                 toggle: false,
               ),
             ],
@@ -1130,10 +1463,16 @@ class _PreviewHomeState extends State<PreviewHome> {
         );
         if (!mounted) return;
       }
-      await model.submit(creating, account.text.trim(), password.text);
+      await model.submit(
+        creating,
+        account.text.trim(),
+        password.text,
+        invite.text.trim(),
+      );
       if (!mounted) return;
       password.clear();
       confirmation.clear();
+      invite.clear();
       setState(() => submitting = false);
       if (creating) await _article('注册成功', '账号已创建，请切换到开始游戏并登录。');
     } catch (failure) {

@@ -28,6 +28,7 @@ import {
   Zap,
   Search,
   ArrowLeft,
+  Ticket,
 } from "lucide-react";
 import type { Command, Section, Selection } from "./domain";
 import { applyCommand, isDirectCommand, resolveRecipients } from "./domain";
@@ -46,6 +47,8 @@ import { Inventory } from "./pages/Inventory";
 import { Dashboard } from "./pages/Dashboard";
 import { Players, PlayerPicker } from "./pages/Players";
 import { MailPage } from "./pages/Mail";
+import { CdkPage } from "./pages/Cdk";
+import { RegistrationPage } from "./pages/Registration";
 import { QuestPage } from "./pages/Quests";
 import { GmPage } from "./pages/Gm";
 import { AntiCheatPage } from "./pages/AntiCheat";
@@ -84,6 +87,20 @@ const navigation = [
     icon: Mail,
     title: "邮件与发放",
     sub: "选择收件角色，配置奖励，一次确认完成发放。",
+  },
+  {
+    id: "cdk",
+    label: "CDK",
+    icon: Ticket,
+    title: "CDK 兑换码",
+    sub: "生成点券/道具/装备兑换码，玩家在登录器自助兑换。",
+  },
+  {
+    id: "registration",
+    label: "注册管理",
+    icon: KeyRound,
+    title: "注册限制管理",
+    sub: "一机一号 + 一 IP 一号；邀请码发放（网吧）、注册留痕与解绑。",
   },
   {
     id: "quests",
@@ -713,6 +730,10 @@ export function App() {
                     <Players {...props} accountMode />
                   ) : section === "mail" ? (
                     <MailPage {...props} />
+                  ) : section === "cdk" ? (
+                    <CdkPage {...props} />
+                  ) : section === "registration" ? (
+                    <RegistrationPage {...props} />
                   ) : section === "quests" ? (
                     <QuestPage {...props} />
                   ) : section === "anti-cheat" ? (

@@ -38,6 +38,13 @@ func (s *Server) v1OperationRoutes(read, write *http.ServeMux) {
 	write.HandleFunc("POST /api/v1/mail/preview", s.v1MailPreview)
 	write.HandleFunc("POST /api/v1/mail/online-preview", s.v1OnlineMailPreview)
 	write.HandleFunc("POST /api/v1/tasks/{id}/run", s.v1RunTask)
+	read.HandleFunc("GET /api/v1/cdks", s.v1CdkList)
+	write.HandleFunc("POST /api/v1/cdk", s.v1CdkGenerate)
+	// 注册限制管理（邀请码 / 注册记录 / 解绑，见 api_registration.go）。
+	read.HandleFunc("GET /api/v1/registration/invites", s.v1RegistrationInvites)
+	read.HandleFunc("GET /api/v1/registration/records", s.v1RegistrationRecords)
+	write.HandleFunc("POST /api/v1/registration/invite", s.v1RegistrationInviteSave)
+	write.HandleFunc("POST /api/v1/registration/unbind", s.v1RegistrationUnbind)
 }
 func (s *Server) v1CSRF(r *http.Request) string {
 	c, err := r.Cookie(CookieName)
@@ -606,4 +613,71 @@ func (s *Server) v1Recipients(w http.ResponseWriter, r *http.Request) {
 		next = s.v1CursorToken(resource, v1Filter(q, ""), strconv.Itoa(end))
 	}
 	v1Reply(w, r, 200, v1Envelope{Data: out, Page: &v1Page{Limit: q.Limit, NextCursor: next}})
+}
+
+// ---- CDK 兑换码管理（生成/列表）。实现经 Deps.Cdk（management.CdkStore）注入。 ----
+
+func (s *Server) v1CdkReady(w http.ResponseWriter, r *http.Request) bool {
+	if s.deps.Cdk == nil {
+		s.v1Unavailable(w, r, errCdkUnavailable)
+		return false
+	}
+	return true
+}
+
+func (s *Server) v1CdkGenerate(w http.ResponseWriter, r *http.Request) {
+	if !s.v1CheckWrite(w, r) {
+		return
+	}
+	if _, ok := v1Idempotency(w, r); !ok {
+		return
+	}
+	if !s.v1CdkReady(w, r) {
+		return
+	}
+	var req CdkGenerateRequest
+	if !v1Decode(w, r, &req) {
+		return
+	}
+	rows, err := s.deps.Cdk.GenerateCdk(r.Context(), req)
+	if err != nil {
+		v1Fail(w, r, 422, "invalid_cdk_request", err.Error(), false)
+		return
+	}
+	v1Reply(w, r, 200, v1Envelope{Data: rows})
+}
+
+func (s *Server) v1CdkList(w http.ResponseWriter, r *http.Request) {
+	if !s.v1CdkReady(w, r) {
+		return
+	}
+	page := 1
+	if raw := r.URL.Query().Get("page"); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			page = v
+		}
+	}
+	pageSize := 50
+	if raw := r.URL.Query().Get("pageSize"); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v >= 1 && v <= 200 {
+			pageSize = v
+		}
+	}
+	q := r.URL.Query()
+	filter := CdkListFilter{
+		Mode:        q.Get("mode"),
+		Query:       strings.TrimSpace(q.Get("q")),
+		CharacterID: strings.TrimSpace(q.Get("characterId")),
+	}
+	switch filter.Mode {
+	case "all", "code", "note", "character":
+	default:
+		filter.Mode = "all"
+	}
+	rows, total, err := s.deps.Cdk.ListCdk(r.Context(), filter, page, pageSize)
+	if err != nil {
+		v1Fail(w, r, 500, "cdk_list_failed", "读取兑换码列表失败", false)
+		return
+	}
+	v1Reply(w, r, 200, v1Envelope{Data: map[string]any{"rows": rows, "total": total, "page": page, "pageSize": pageSize}})
 }

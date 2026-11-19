@@ -31,7 +31,7 @@ if (args.Length == 2 && args[0] == "--recover-bundle") { BundleInstaller.Recover
 // parent and sends bounded newline JSON through redirected process pipes.
 var data = args.Length == 2 && args[0] == "--state-directory"
     ? Path.GetFullPath(args[1])
-    : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DNF90Launcher" + (LauncherBuild.AntiCheat ? "-anticheat" : ""));
+    : LaunchData.Resolve(LauncherBuild.AntiCheat);
 SafeFiles.NoLinks(data);
 Directory.CreateDirectory(data);
 using var instance = new FileStream(Path.Combine(data, "instance.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
@@ -56,6 +56,12 @@ async Task Dispatch(Request request)
             case "pause": engine.Pause(); break;
             case "preferences": await engine.SavePreferences(request.Args.Deserialize(WireJson.Default.Preferences) ?? throw new InvalidDataException()); break;
             case "register": await engine.Register(request.Args.Deserialize(WireJson.Default.Credentials) ?? throw new InvalidDataException()); break;
+            case "redeemCdk":
+                var cdkResult = await engine.RedeemCdk(request.Args.Deserialize(WireJson.Default.CdkInput) ?? throw new InvalidDataException());
+                Respond(new(request.Id, true, State: engine.State, CdkResult: cdkResult)); return;
+            case "cdkCharacters":
+                var cdkCharacters = await engine.CdkCharacters(request.Args.Deserialize(WireJson.Default.CdkInput) ?? throw new InvalidDataException());
+                Respond(new(request.Id, true, State: engine.State, CdkCharacters: new CdkCharactersReply(true, null, cdkCharacters))); return;
             case "login": await engine.Login(request.Args.Deserialize(WireJson.Default.Credentials) ?? throw new InvalidDataException()); break;
             case "bindingCode":
             case "changePassword":
@@ -117,3 +123,51 @@ while (await Console.In.ReadLineAsync() is { } line)
 engine.Pause();
 engine.StopProtectedGames();
 await Task.WhenAll(jobs);
+
+internal static class LaunchData
+{
+    // 绿色模式：便携入口通过 DNF90_LAUNCH_DIRECTORY 传递入口目录，核心数据
+    // 跟随入口写入 <入口目录>\DNF90Launcher-Data\state[-anticheat]，更新登录器
+    // 或更换数据盘时配置随目录保留。目录不可写或变量缺失时回退 AppData 布局。
+    internal static string Resolve(bool anticheat)
+    {
+        var suffix = anticheat ? "-anticheat" : "";
+        var fallback = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DNF90Launcher" + suffix);
+        var entry = Environment.GetEnvironmentVariable("DNF90_LAUNCH_DIRECTORY");
+        if (string.IsNullOrWhiteSpace(entry) || !Path.IsPathFullyQualified(entry) || !Directory.Exists(entry)) return fallback;
+        string state;
+        try
+        {
+            state = Path.Combine(entry, "DNF90Launcher-Data", "state" + suffix);
+            SafeFiles.NoLinks(state);
+            Directory.CreateDirectory(state);
+            var probe = Path.Combine(state, ".write-probe");
+            using (var stream = new FileStream(probe, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                stream.WriteByte(0);
+            File.Delete(probe);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
+        {
+            return fallback;
+        }
+        MigrateLegacy(fallback, state);
+        return state;
+    }
+
+    // 一次性迁移：绿色目录为空时从既有 AppData 布局导入偏好设置；
+    // 签名元数据、下载缓存与诊断记录不迁移，避免旧签名阻塞新目录。
+    private static void MigrateLegacy(string legacy, string state)
+    {
+        try
+        {
+            if (Directory.EnumerateFileSystemEntries(state).Any()) return;
+            var source = Path.Combine(legacy, "preferences.json");
+            SafeFiles.NoLinks(source);
+            if (!File.Exists(source) || new FileInfo(source).Length > 65536) return;
+            SafeFiles.Atomic(Path.Combine(state, "preferences.json"), File.ReadAllBytes(source));
+        }
+        catch (Exception error) when (error is JsonException or IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+        }
+    }
+}

@@ -17,5 +17,4 @@ flutter:
   uses-material-design: true
   assets:
     - assets/background.webp
-    - assets/announcement.webp
     - brand/witch.png

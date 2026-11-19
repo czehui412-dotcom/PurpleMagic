@@ -1,6 +1,6 @@
 import { activityChanges, demoActivities, type ActivitySnapshot, type ActivityChange } from "./activities.ts";
 export type Section =
-  "query" | "inventory" | "mail" | "quests" | "gm" | "benefits" | "activities" | "anti-cheat" | "accounts" | "settings"
+  "query" | "inventory" | "mail" | "cdk" | "registration" | "quests" | "gm" | "benefits" | "activities" | "anti-cheat" | "accounts" | "settings"
   | "system";
 export type InventoryTab =
   | "bag"
@@ -273,6 +273,8 @@ export type Command =
       category?: string;
       date?: string;
       format?: "text" | "markdown";
+      // 独立公告位：发布时同分类只保留这一条（服务端与登录器同步去重）。
+      exclusive?: boolean;
       sourceRevision?: string;
     }
   | {
@@ -615,21 +617,28 @@ export function applyCommand(
       if (!command.title.trim() || !command.body.trim())
         throw new Error("请填写公告标题和正文");
       const n = s.news.find((n) => n.id === command.id);
-      if (n)
+      let entry: News;
+      if (n) {
         Object.assign(n, {
           title: command.title,
           body: command.body,
           category: command.category, date: command.date, format: command.format,
           published: command.published,
         });
-      else
-        s.news.unshift({
+        entry = n;
+      } else {
+        entry = {
           id: requestId,
           title: command.title,
           body: command.body,
           category: command.category, date: command.date, format: command.format,
           published: command.published,
-        });
+        };
+        s.news.unshift(entry);
+      }
+      // 独立公告位：发布后同分类只保留这一条。
+      if (command.published && command.exclusive)
+        s.news = s.news.filter((m) => m === entry || (m.category || "综合") !== (command.category || "综合"));
       target = command.title;
       summary = command.published ? "公告已发布" : "公告草稿已保存";
       break;

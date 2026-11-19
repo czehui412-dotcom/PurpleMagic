@@ -33,3 +33,8 @@ node_modules/
 /gm-console/.npmrc
 
 !/docs/diagnostics/diagnostics-synthetic.log
+
+# 本地运行时索引与打包产物（保留在磁盘，不入库）
+/gmindex/
+pm_gateway_src.tgz
+*.bak

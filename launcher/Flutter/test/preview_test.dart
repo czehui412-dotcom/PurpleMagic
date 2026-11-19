@@ -48,7 +48,6 @@ void main() {
       await Future.wait(
         [
           'assets/background.webp',
-          'assets/announcement.webp',
           'brand/witch.png',
         ].map((name) => precacheImage(AssetImage(name), context)),
       );

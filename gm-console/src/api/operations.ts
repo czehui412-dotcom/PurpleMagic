@@ -564,7 +564,7 @@ export async function prepareOperation(
       if (hub.newsManager) {
         add(p.summary, "/api/v1/hub/news/entries", {
           action:command.kind === "news-delete" ? "delete" : command.kind === "news-move" ? "move" : "save",
-          id:originId, ...(item ? {news:item}:{}), ...(command.kind === "news-move" ? {direction:command.direction}:{}),
+          id:originId, ...(item ? {news:item, exclusive:(command as {exclusive?: boolean}).exclusive !== false}:{}), ...(command.kind === "news-move" ? {direction:command.direction}:{}),
         }, {headers:{"If-Match":`"${revision}"`}});
       } else {
         const news = structuredClone(hub.published?.news || []);
