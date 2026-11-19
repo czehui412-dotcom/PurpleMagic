@@ -317,7 +317,7 @@ func (h *Hub) PublicHandler() http.Handler {
 		if r.URL.RawQuery == "" && r.URL.RawPath == "" && (r.Method == "GET" || r.Method == "HEAD") && (h.serveBundle(w, r) || h.serveContentBlob(w, r)) {
 			return
 		}
-		if r.URL.Path != "/launcher/v2/bootstrap.json" || r.URL.RawQuery != "" || (r.Method != "GET" && r.Method != "HEAD") {
+		if r.URL.Path != "/launcher/v2/bootstrap.json" && r.URL.Path != "/launcher/anticheat/v2/bootstrap.json" || r.URL.RawQuery != "" || (r.Method != "GET" && r.Method != "HEAD") {
 			http.NotFound(w, r)
 			return
 		}

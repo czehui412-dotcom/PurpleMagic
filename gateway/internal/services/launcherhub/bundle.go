@@ -15,7 +15,7 @@ import (
 	"strings"
 )
 
-var bundlePath = regexp.MustCompile(`^/launcher/v2/bundles/([a-f0-9]{64})\.zip$`)
+var bundlePath = regexp.MustCompile(`^/launcher/(?:v2|anticheat/v2)/bundles/([a-f0-9]{64})\.zip$`)
 var versionPattern = regexp.MustCompile(`^[0-9]{1,5}\.[0-9]{1,5}\.[0-9]{1,5}$`)
 
 func versionAfter(a, b string) bool {
@@ -117,7 +117,7 @@ func (h *Hub) uploadBundle(w http.ResponseWriter, r *http.Request) {
 		failure(w, 409, "登录器版本必须递增")
 		return
 	}
-	h.state.Published.Launcher = &Bundle{Version: version, URL: strings.TrimRight(h.profile.ApiURL, "/") + "/launcher/v2/bundles/" + sha + ".zip", Size: size, SHA256: sha}
+	h.state.Published.Launcher = &Bundle{Version: version, URL: strings.TrimRight(h.profile.ApiURL, "/") + "/launcher/anticheat/v2/bundles/" + sha + ".zip", Size: size, SHA256: sha}
 	// Publish the compiled account-binding policy with the new launcher, while
 	// preserving the current game endpoints and signed content compatibility.
 	h.state.Published.Profile.EnableQQBinding = h.profile.EnableQQBinding

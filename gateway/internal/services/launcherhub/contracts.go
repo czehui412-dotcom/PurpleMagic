@@ -52,6 +52,7 @@ type Profile struct {
 	ChannelServerID         int      `json:"ChannelServerId,omitempty"`
 	PreviousChannelServerID *int     `json:"PreviousChannelServerId,omitempty"`
 	MinimumLauncherVersion  string   `json:"MinimumLauncherVersion,omitempty"`
+	AntiCheat               any      `json:"AntiCheat,omitempty"`
 }
 
 func (p Profile) validateDirectory() error {
@@ -269,7 +270,8 @@ func selectContent(m UpstreamManifest, s Source, p Profile, payloadHash string) 
 			}
 			found[lower] = true
 		}
-		allowed := isRequired || lower == "client/dstr.dat" || (strings.HasPrefix(lower, "client/imagepacks2/") && strings.HasSuffix(lower, ".npk"))
+		allowed := isRequired || lower == "client/dstr.dat" || (strings.HasPrefix(lower, "client/imagepacks2/") && strings.HasSuffix(lower, ".npk")) ||
+			(strings.HasPrefix(lower, "client/") && strings.HasSuffix(lower, ".dll"))
 		if allowed && (f.Downloadable || isRequired) {
 			f.Path = f.Path[len("client/"):]
 			content.Files = append(content.Files, f)

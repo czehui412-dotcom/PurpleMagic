@@ -1,59 +1,106 @@
 import {lazy, Suspense, useEffect, useState} from "react";
-import {Plus, Trash2, Save, Send, ArrowUp, ArrowDown, Search, RefreshCw} from "lucide-react";
+import {Trash2, Save, Send, RefreshCw} from "lucide-react";
 import {Field, Pill, Tabs, type PageProps} from "../ui";
 import {useLive} from "../api/context";
 import type {News} from "../domain";
 const MarkdownBody = lazy(() => import("./MarkdownBody").then(m => ({default:m.MarkdownBody})));
 import "./news.css";
 
-const fresh = (): News => ({id:"",title:"",body:"",published:false,category:"综合",date:new Date().toLocaleDateString("sv-SE"),format:"markdown"});
+// 三个独立公告位：综合 / 更新 / 指南各一条，互相独立编辑与发布；
+// 发布时后端按分类互斥覆盖（exclusive），登录器对应页签即时显示。
+const CATS = ["综合", "更新", "指南"] as const;
+const fresh = (c: string): News => ({id:"",title:"",body:"",published:false,category:c,date:new Date().toLocaleDateString("sv-SE"),format:"markdown"});
+
+function seeds(news: News[]): Record<string, News> {
+  const out: Record<string, News> = {};
+  for (const c of CATS) {
+    const found = news.find(n => (n.category || "综合") === c);
+    out[c] = found ? {...found, category: c, format: found.format || "text"} : fresh(c);
+  }
+  return out;
+}
+
 export function NewsManager({state,request}: PageProps) {
   const live = useLive();
-  const [draft,setDraft]=useState<News>(fresh), [view,setView]=useState("edit"), [q,setQ]=useState(""), [page,setPage]=useState(0);
-  const hub=state.api?.hub, remote=hub?.newsPage;
-  const local=state.news.filter(n=>(n.title+"\n"+n.body).toLowerCase().includes(q.toLowerCase()));
-  const rows=live ? state.news : local.slice(page*20,page*20+20);
-  const total=remote?.total ?? local.length, offset=remote?.offset ?? page*20;
+  const [cat,setCat]=useState<(typeof CATS)[number]>("综合");
+  const [view,setView]=useState("edit");
+  const [dirty,setDirty]=useState<Record<string,boolean>>({});
+  const [drafts,setDrafts]=useState<Record<string,News>>(()=>seeds(state.news));
+  const hub=state.api?.hub;
+  // 服务端列表变化时，只同步未在编辑的公告位（避免覆盖正在输入的内容）。
+  useEffect(()=> {
+    setDrafts(prev=>{
+      const seeded=seeds(state.news);
+      const next={...prev};
+      for (const c of CATS) if (!dirty[c]) next[c]=seeded[c];
+      return next;
+    });
+  },[state.news]);
+  // 发布/删除完成后回填 id 与发布状态，并清除编辑标记。
   useEffect(()=> {
     const pending=state.api?.pending;
     if (!pending?.completed) return;
-    const op=pending.steps.find(s=>(s.path==="/api/v1/hub/news/entries" || s.path==="/admin/api/news/entries") || s.path==="local-news-delete");
-    if (op?.body.action==="delete" || op?.path==="local-news-delete") {
-      if (op.body.id===draft.id) setDraft(fresh());
-    } else if (op?.body.action==="save" && op.body.news.title===draft.title && op.body.news.body===draft.body) {
-      setDraft(d=>({...d,id:op.result?.id || d.id,published:true,sourceRevision:op.result?.newsRevision}));
+    const op=pending.steps.find(s=>s.path==="/api/v1/hub/news/entries" || s.path==="local-news-delete" || s.path==="local-draft");
+    if (!op) return;
+    if (op.path==="local-news-delete" || (op.path==="/api/v1/hub/news/entries" && op.body?.action==="delete")) {
+      setDrafts(d=>{
+        const next={...d};
+        for (const c of CATS) if (next[c].id && next[c].id===op.body.id) next[c]=fresh(c);
+        return next;
+      });
+    } else {
+      // 服务器路径正文在 op.body.news 下；本地草稿路径直接在 op.body 下。
+      const title=op.body?.news?.title ?? op.body?.title;
+      const body=op.body?.news?.body ?? op.body?.body;
+      setDrafts(d=>{
+        const next={...d};
+        for (const c of CATS) {
+          const t=next[c];
+          if (title===t.title && body===t.body)
+            next[c]={...t,id:op.result?.id || t.id,published:op.path==="/api/v1/hub/news/entries"};
+        }
+        return next;
+      });
     }
+    setDirty({});
   },[state.api?.pending?.completed]);
-  useEffect(()=> {
-    const saved=state.news.find(n=>!n.published && n.title===draft.title && n.body===draft.body);
-    if (saved && draft.title && !draft.id.startsWith("draft-")) setDraft(saved);
-  },[state.news]);
-  function load(offset:number,query=q) { if(live) void live.guard(()=>live.hubNews(offset,query)); else setPage(Math.floor(offset/20)); }
-  function choose(n:News) {setDraft({...n,category:n.category || "综合",date:n.date || "",format:n.format || "text"});setView("edit");}
+  function edit(patch: Partial<News>) {
+    setDrafts(d=>({...d,[cat]:{...d[cat],...patch}}));
+    setDirty(p=>({...p,[cat]:true}));
+  }
+  const draft=drafts[cat];
   const revision=draft.sourceRevision || hub?.newsRevision;
-  const publish=(published:boolean)=>request({kind:"news",...draft,published,sourceRevision:revision});
+  const publish=(published:boolean)=>request({kind:"news",...draft,published,exclusive:true,sourceRevision:revision});
+  const bytes=new TextEncoder().encode(draft.body).length;
   return <div className="news-layout">
     <aside className="glass content-panel news-list">
-      <div className="panel-heading"><h3>公告列表 <small>{remote?.archiveTotal ?? state.news.length}</small></h3><div className="button-row">
-        <button className="icon-button" aria-label="刷新公告列表" onClick={()=>{live?.http.invalidate(["news"]);load(offset);}}><RefreshCw size={16}/></button>
-        <button className="icon-button" aria-label="新建公告" onClick={()=>{setDraft(fresh());setView("edit");}}><Plus size={18}/></button>
+      <div className="panel-heading"><h2>公告位 <small>3 个</small></h2><div className="button-row">
+        <button className="icon-button" aria-label="刷新公告" onClick={()=>{live?.http.invalidate(["news"]);setDirty({});setDrafts(seeds(state.news));}}><RefreshCw size={16}/></button>
       </div></div>
-      <form className="news-search" onSubmit={e=>{e.preventDefault();load(0);}}><input aria-label="搜索历史公告" placeholder="搜索标题或正文" value={q} onChange={e=>{setQ(e.target.value);if(!live)setPage(0);}}/><button className="icon-button" aria-label="搜索公告"><Search size={16}/></button></form>
-      <div className="news-rows">{rows.map(n=><button key={n.id} className={n.id===draft.id?"active":""} onClick={()=>choose(n)}><span><strong>{n.title}</strong><small>{n.published ? `${n.category || "综合"} · ${n.date || "已发布"}`:"本地草稿"}</small></span></button>)}{!rows.length && <p className="muted">暂无公告</p>}</div>
-      <div className="news-pagination"><button className="secondary" disabled={!offset} onClick={()=>load(Math.max(0,offset-20))}>上一页</button><small>{total ? `${offset+1}–${Math.min(offset+20,total)} / ${total}`:"0 条"}</small><button className="secondary" disabled={offset+20>=total} onClick={()=>load(offset+20)}>下一页</button></div>
+      <div className="news-rows">
+        {CATS.map(c=>(
+          <button key={c} className={c===cat?"active":""} onClick={()=>setCat(c)}>
+            <span><strong>{c}</strong><small>{drafts[c].published ? `已发布 · ${drafts[c].title || "未命名"}` : drafts[c].title ? "有未发布修改" : "未设置"}</small></span>
+          </button>
+        ))}
+      </div>
+      <p className="muted news-hint">三个公告位各自独立，发布后同分类只保留这一条；登录器对应页签显示该条公告。</p>
     </aside>
     <form className="glass content-panel news-editor" onSubmit={e=>{e.preventDefault();publish(false);}}>
-      <div className="panel-heading"><h2>{draft.id ? "编辑公告":"新建公告"}</h2><Pill>{draft.published?"已发布":"草稿"}</Pill></div>
-      <Field label="标题"><input required maxLength={160} value={draft.title} onChange={e=>setDraft({...draft,title:e.target.value})} placeholder="公告标题"/></Field>
-      <div className="news-fields"><Field label="分类"><select value={draft.category} onChange={e=>setDraft({...draft,category:e.target.value})}>{["综合","更新","指南"].map(c=><option key={c}>{c}</option>)}</select></Field><Field label="显示日期"><input maxLength={32} value={draft.date} onChange={e=>setDraft({...draft,date:e.target.value})}/></Field><Field label="正文格式"><select value={draft.format} onChange={e=>setDraft({...draft,format:e.target.value as News["format"]})}><option value="markdown">Markdown</option><option value="text">纯文本</option></select></Field></div>
+      <div className="panel-heading"><h2>编辑「{cat}」公告</h2><Pill>{draft.published?"已发布":"未发布"}</Pill></div>
+      <Field label="标题"><input required maxLength={160} value={draft.title} onChange={e=>edit({title:e.target.value})} placeholder={`${cat}公告标题`}/></Field>
+      <div className="news-fields">
+        <Field label="分类"><input value={cat} disabled/></Field>
+        <Field label="显示日期"><input maxLength={32} value={draft.date} onChange={e=>edit({date:e.target.value})}/></Field>
+        <Field label="正文格式"><select value={draft.format} onChange={e=>edit({format:e.target.value as News["format"]})}><option value="markdown">Markdown</option><option value="text">纯文本</option></select></Field>
+      </div>
       <Tabs value={view} onChange={setView} label="公告正文" items={[{id:"edit",label:"编辑"},{id:"preview",label:"预览"}]}/>
-      <div className="news-editor-body">{view==="edit" ? <textarea aria-label="公告正文" rows={16} value={draft.body} onChange={e=>setDraft({...draft,body:e.target.value})} placeholder={draft.format==="markdown" ? "## 更新内容\n\n- 支持 **加粗**、列表、表格、代码和链接":"输入公告内容"}/> : <Suspense fallback={<p className="muted">正在准备预览…</p>}><MarkdownBody body={draft.body || "暂无正文"} format={draft.format}/></Suspense>}</div>
-      <div className="news-hint"><span>{draft.format==="markdown" ? "支持标题、列表、表格、引用、代码、链接及图片":"保留原有文字与换行"}</span><small>{new TextEncoder().encode(draft.body).length.toLocaleString()} / 65,536 字节</small></div>
+      <div className="news-editor-body">{view==="edit" ? <textarea aria-label="公告正文" rows={16} value={draft.body} onChange={e=>edit({body:e.target.value})} placeholder={draft.format==="markdown" ? "## 更新内容\n\n- 支持 **加粗**、列表、表格、代码和链接":"输入公告内容"}/> : <Suspense fallback={<p className="muted">正在准备预览…</p>}><MarkdownBody body={draft.body || "暂无正文"} format={draft.format}/></Suspense>}</div>
+      <div className="news-hint"><span>{draft.format==="markdown" ? "支持标题、列表、表格、引用、代码、链接及图片":"保留原有文字与换行"}</span><small>{bytes.toLocaleString()} / 65,536 字节</small></div>
       <div className="news-actions"><div className="button-row">
-        {draft.id && <button type="button" className="danger secondary" onClick={()=>request({kind:"news-delete",id:draft.id,sourceRevision:revision})}><Trash2 size={15}/>删除{draft.published?"公告":"草稿"}</button>}
-        {draft.published && <><button type="button" className="icon-button" title="上移" aria-label="上移公告" onClick={()=>request({kind:"news-move",id:draft.id,direction:"up",sourceRevision:revision})}><ArrowUp size={16}/></button><button type="button" className="icon-button" title="下移" aria-label="下移公告" onClick={()=>request({kind:"news-move",id:draft.id,direction:"down",sourceRevision:revision})}><ArrowDown size={16}/></button></>}
-      </div><div className="button-row"><button className="secondary" disabled={!draft.title.trim()}><Save size={15}/>保存草稿</button><button type="button" className="primary" disabled={!draft.title.trim() || !draft.body.trim() || new TextEncoder().encode(draft.body).length>65536} onClick={()=>publish(true)}><Send size={15}/>发布公告</button></div></div>
-      <p className="muted news-hint">历史公告保留在后台，登录器同步列表前部的近期公告。</p>
+        {draft.id && <button type="button" className="danger secondary" onClick={()=>request({kind:"news-delete",id:draft.id,sourceRevision:revision})}><Trash2 size={15}/>下线此公告</button>}
+      </div><div className="button-row"><button className="secondary" disabled={!draft.title.trim()}><Save size={15}/>保存草稿</button><button type="button" className="primary" disabled={!draft.title.trim() || !draft.body.trim() || bytes>65536} onClick={()=>publish(true)}><Send size={15}/>发布到「{cat}」页签</button></div></div>
+      <p className="muted news-hint">发布后登录器「{cat}」页签立即更新；「下线」清空该公告位。</p>
     </form>
   </div>;
 }

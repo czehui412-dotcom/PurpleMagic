@@ -132,6 +132,8 @@ type newsMutation struct {
 	ID        string `json:"id"`
 	News      *News  `json:"news,omitempty"`
 	Direction string `json:"direction,omitempty"`
+	// Exclusive：保存时该分类只保留这一条（GM 三个独立公告位模式）。
+	Exclusive bool `json:"exclusive,omitempty"`
 }
 
 func (h *Hub) mutateNews(w http.ResponseWriter, r *http.Request) {
@@ -203,6 +205,17 @@ func (h *Hub) mutateNews(w http.ResponseWriter, r *http.Request) {
 			entries = append([]NewsEntry{{ID: id, News: *in.News}}, entries...)
 		} else {
 			entries[index].News = *in.News
+		}
+		// 独立公告位模式：同分类只保留刚保存的这一条，其余同类历史条目移除。
+		if in.Exclusive && in.News != nil {
+			filtered := make([]NewsEntry, 0, len(entries))
+			for _, e := range entries {
+				if e.ID != id && e.News.Category == in.News.Category {
+					continue
+				}
+				filtered = append(filtered, e)
+			}
+			entries = filtered
 		}
 	case "delete":
 		entries = slices.Delete(entries, index, index+1)
