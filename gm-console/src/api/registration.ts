@@ -84,3 +84,21 @@ export async function registrationUnbind(
     requestId(),
   );
 }
+
+// 拉取全部注册留痕（按 IP+机器码分组视图用）。pageSize 上限 200，循环到 total；
+// MAX_PAGES 防止异常 total 导致无限循环。
+export async function listAllRegistrationRecords(
+  api: ConsoleAPI,
+  maxPages = 50,
+): Promise<RegistrationRecord[]> {
+  const size = 200;
+  const first = await listRegistrationRecords(api, 1, size);
+  const all = [...first.rows];
+  const pages = Math.min(maxPages, Math.ceil(first.total / size));
+  for (let page = 2; page <= pages; page++) {
+    const next = await listRegistrationRecords(api, page, size);
+    if (!next.rows.length) break;
+    all.push(...next.rows);
+  }
+  return all;
+}
