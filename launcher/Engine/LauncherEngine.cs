@@ -13,7 +13,7 @@ namespace Dnf90.Launcher;
 
 public sealed class LauncherEngine : IDisposable
 {
-    public const string VersionText = "1.0.12";
+    public const string VersionText = "1.0.19";
     public const string ContentCapabilitiesHeader = "X-DNF90-Content-Capabilities";
     public const string ContentCapabilities = "native-plugins-v1";
     private readonly PlayerProfile root;
@@ -304,10 +304,36 @@ public sealed class LauncherEngine : IDisposable
             return await api.Submit(action, input.Account.Trim(), input.Password, Device(), input.NewPassword);
         } finally { operation.Release(); }
     }
+    // CDK 兑换码：独立轻量操作（不影响登录/更新状态机），账号密码由服务端验证。
+    public async Task<CdkReply> RedeemCdk(CdkInput input)
+    {
+        if (!await operation.WaitAsync(0)) throw new InvalidOperationException("已有操作正在进行。");
+        try
+        {
+            ValidateCredentials(new(input.Account, input.Password));
+            if (string.IsNullOrWhiteSpace(input.Code)) throw new InvalidOperationException("请输入兑换码。");
+            using var api = new PlayerApi(Profile);
+            var reply = await api.RedeemCdk(input.Account.Trim(), input.Password, input.Code.Trim(), input.CharacterId ?? "");
+            if (!reply.Ok) throw new InvalidOperationException(reply.Message ?? "兑换失败。");
+            return reply;
+        }
+        finally { operation.Release(); }
+    }
+    public async Task<CdkCharacter[]> CdkCharacters(CdkInput input)
+    {
+        if (!await operation.WaitAsync(0)) throw new InvalidOperationException("已有操作正在进行。");
+        try
+        {
+            ValidateCredentials(new(input.Account, input.Password));
+            using var api = new PlayerApi(Profile);
+            return await api.ListCdkCharacters(input.Account.Trim(), input.Password);
+        }
+        finally { operation.Release(); }
+    }
     public async Task Register(Credentials input)
     {
         if (!await operation.WaitAsync(0)) throw new InvalidOperationException("已有操作正在进行。");
-        try { ValidateCredentials(input); Emit("logging-in", "正在注册本服账号…"); using var api = new PlayerApi(Profile); await api.Submit("register", input.Account.Trim(), input.Password, Device()); Emit("ready", "注册成功，请登录。"); }
+        try { ValidateCredentials(input); Emit("logging-in", "正在注册本服账号…"); using var api = new PlayerApi(Profile); await api.Submit("register", input.Account.Trim(), input.Password, Device(), invite: input.Invite); Emit("ready", "注册成功，请登录。"); }
         catch { Emit("error", "注册未完成，请查看提示。"); throw; }
         finally { operation.Release(); }
     }

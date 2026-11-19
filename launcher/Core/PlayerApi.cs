@@ -53,13 +53,13 @@ public sealed class PlayerApi : IDisposable
             && (errors & SslPolicyErrors.RemoteCertificateNameMismatch) == 0
             && Convert.ToHexString(SHA256.HashData(cert.RawData)).Equals(profile.CertificateSha256, StringComparison.OrdinalIgnoreCase);
     }
-    public async Task<LoginReply> Submit(string action, string account, string password, string device, string? newPassword = null, string? diagnosticCorrelationId = null)
+    public async Task<LoginReply> Submit(string action, string account, string password, string device, string? newPassword = null, string? diagnosticCorrelationId = null, string? invite = null)
     {
         if (action is not ("register" or "login" or "binding-code" or "password")) throw new ArgumentException(nameof(action));
         var traceId = "http-" + Guid.NewGuid().ToString("N")[..16];
         var watch = Stopwatch.StartNew();
         using var request = new HttpRequestMessage(HttpMethod.Post, Profile.ApiUrl + "/api/account/" + action) {
-            Content = JsonContent.Create(new AccountRequest(account, password, device) { newPassword = newPassword, requireQQBinding = Profile.RequireQQBinding, diagnosticCorrelationId = diagnosticCorrelationId }, CoreJson.Default.AccountRequest)
+            Content = JsonContent.Create(new AccountRequest(account, password, device) { newPassword = newPassword, requireQQBinding = Profile.RequireQQBinding, diagnosticCorrelationId = diagnosticCorrelationId, invite = invite }, CoreJson.Default.AccountRequest)
         };
         request.Headers.TryAddWithoutValidation("X-PurpleMagic-Trace", traceId);
         using var response = await Http.SendAsync(request);
@@ -77,6 +77,25 @@ public sealed class PlayerApi : IDisposable
     {
         using var response = await Http.GetAsync(Profile.ApiUrl + "/api/status");
         response.EnsureSuccessStatusCode();
+    }
+
+    // CDK 兑换码：账号密码验证由服务端完成（bcrypt），成功后服务端直接发货。
+    public async Task<CdkReply> RedeemCdk(string account, string password, string code, string characterId)
+    {
+        using var response = await Http.PostAsJsonAsync(Profile.ApiUrl + "/api/cdk/redeem",
+            new CdkRequest(account, password, code, characterId), CoreJson.Default.CdkRequest);
+        var reply = await response.Content.ReadFromJsonAsync(CoreJson.Default.CdkReply);
+        if (reply is null) throw new InvalidOperationException("兑换服务暂不可用。");
+        return reply;
+    }
+    public async Task<CdkCharacter[]> ListCdkCharacters(string account, string password)
+    {
+        using var response = await Http.PostAsJsonAsync(Profile.ApiUrl + "/api/cdk/characters",
+            new CdkRequest(account, password, "", ""), CoreJson.Default.CdkRequest);
+        var reply = await response.Content.ReadFromJsonAsync(CoreJson.Default.CdkCharactersReply);
+        if (reply is null) throw new InvalidOperationException("角色服务暂不可用。");
+        if (!reply.Ok) throw new InvalidOperationException(reply.Message ?? "账号或密码不正确。");
+        return reply.Characters;
     }
     public void Dispose() => Http.Dispose();
 }

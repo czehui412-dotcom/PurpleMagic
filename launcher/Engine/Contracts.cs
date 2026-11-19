@@ -29,11 +29,13 @@ public sealed record State(string Phase, string Message, double Progress, long D
     public DiagnosticStatus? Diagnostics { get; init; }
 }
 public sealed record Request(int Id, string Method, JsonElement Args);
-public sealed record Response(int Id, bool Ok, string? Error = null, State? State = null, bool Restart = false, ConfigurationReset? ConfigurationReset = null, DiagnosticExport? DiagnosticExport = null, LoginReply? AccountResult = null, string? ErrorCode = null, long RetryAfter = 0, string? DiagnosticIncidentId = null, string? DiagnosticEntryId = null, ContractObservationItem? DiagnosticObservation = null);
+public sealed record Response(int Id, bool Ok, string? Error = null, State? State = null, bool Restart = false, ConfigurationReset? ConfigurationReset = null, DiagnosticExport? DiagnosticExport = null, LoginReply? AccountResult = null, string? ErrorCode = null, long RetryAfter = 0, string? DiagnosticIncidentId = null, string? DiagnosticEntryId = null, ContractObservationItem? DiagnosticObservation = null, CdkReply? CdkResult = null, CdkCharactersReply? CdkCharacters = null);
 public sealed record ConfigurationReset(bool Reset, string? BackupPath);
 public sealed record Event(string Type, State State);
-public sealed record Credentials(string Account, string Password);
+// Invite：注册邀请码（网吧等共享出口场景绕过机器码/IP 双重限制），登录时为空。
+public sealed record Credentials(string Account, string Password, string? Invite = null);
 public sealed record PasswordChange(string Account, string Password, string NewPassword);
+public sealed record CdkInput(string Account, string Password, string Code, string CharacterId);
 public sealed record TransactionEntry(string Path, bool HadOriginal);
 public sealed record TransactionJournal(string Phase, TransactionEntry[] Entries, string? PreviousReceipt);
 public sealed record BundleJob(string InstallRoot, string Package, string Envelope, int UiPid, long UiStart, int CorePid, long CoreStart, string Work, string Phase);
@@ -53,6 +55,10 @@ public sealed record BundleOutcome(string Version, bool Succeeded, string Reason
 [JsonSerializable(typeof(Event))]
 [JsonSerializable(typeof(Credentials))]
 [JsonSerializable(typeof(PasswordChange))]
+[JsonSerializable(typeof(CdkInput))]
+[JsonSerializable(typeof(CdkReply))]
+[JsonSerializable(typeof(CdkCharacter))]
+[JsonSerializable(typeof(CdkCharactersReply))]
 [JsonSerializable(typeof(LoginReply))]
 [JsonSerializable(typeof(TransactionJournal))]
 [JsonSerializable(typeof(BundleJob))]
