@@ -36,6 +36,9 @@ type Config struct {
 	GameAPI          string              `json:"gameApi"`
 	GameToken        string              `json:"gameToken"`
 	ScanSeconds      int                 `json:"scanSeconds"`
+	// BenefitDeliverSecret 启用注册/建角色的即时福利投递入口（Bearer 校验）。
+	// 留空 = 关闭，扫描轮次仍是唯一发放来源。
+	BenefitDeliverSecret string `json:"benefitDeliverSecret,omitempty"`
 }
 
 func ReadConfig(path string) (Config, error) {

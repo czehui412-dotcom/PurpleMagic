@@ -77,6 +77,9 @@ type Config struct {
 	// PVFPath / DatabaseLabel 只用于状态栏展示。
 	PVFPath       string
 	DatabaseLabel string
+	// BenefitDeliverSecret 启用即时福利直投入口（gw_benefit_direct.go，Bearer 校验）
+	// 与后台新账号福利扫描（gw_benefit_watcher.go）。取值 ≥16 字符。
+	BenefitDeliverSecret string
 	// EquipSlotQuestSync 为真时，「开启特殊装备槽」在写 ex_equip_slot_stat 的位之外，
 	// **额外**把运行时 PVF 里授权该槽位的任务标成 completed（任务手册与位一致，
 	// 但会跳过那些任务本身的收集流程）。默认 false = 只写位，与 A21 C# 工具、
@@ -109,6 +112,7 @@ type Deps struct {
 	Runtime            *adminapi.Client
 	Benefits           *testbenefits.Store
 	Activities         *onlineevent.Controls
+	Cdk                CdkAdmin
 	Repos              func() (dnfrepo.Group, bool)
 	PVF                func() (dnfpvf.Source, error)
 	PremiumTypes       func() ([]int64, error)
@@ -280,6 +284,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
 	mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
+
+	// 即时福利直投（运维脚本触发单账号福利补投，Bearer 校验在 handler 内）。
+	mux.HandleFunc("POST /api/internal/gateway/v1/benefit-deliver", s.handleDirectBenefitDelivery)
 
 	// 账号。
 	mux.HandleFunc("GET /api/accounts", s.handleAccountList)

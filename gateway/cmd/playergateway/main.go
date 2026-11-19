@@ -43,12 +43,13 @@ type config struct {
 }
 
 var releaseFile = regexp.MustCompile(`^/launcher/(settings\.json|release\.json|ServerS5A3-[0-9.]+\.zip|PurpleMagic\.exe(?:\.sha256)?|DNF90-Portable-[0-9]+\.[0-9]+\.[0-9]+\.exe(?:\.sha256)?)$`)
+var channelManifest = regexp.MustCompile(`^/channels/(stable|preview)/manifest\.signed\.json$`)
 
 func handler(c config) http.Handler {
-	return handlerWithHub(c, nil)
+	return handlerWithHub(c, nil, nil)
 }
 
-func handlerWithHub(c config, hub *launcherhub.Hub) http.Handler {
+func handlerWithHub(c config, hub *launcherhub.Hub, cdk http.Handler) http.Handler {
 	u, err := url.Parse(c.Upstream)
 	if err != nil {
 		panic(err)
@@ -76,11 +77,29 @@ func handlerWithHub(c config, hub *launcherhub.Hub) http.Handler {
 			return
 		}
 		switch {
-		case hub != nil && (strings.HasPrefix(r.URL.Path, "/launcher/v2/") || strings.HasPrefix(r.URL.Path, "/blobs/")):
+		case hub != nil && (strings.HasPrefix(r.URL.Path, "/launcher/v2/") || strings.HasPrefix(r.URL.Path, "/launcher/anticheat/v2/") || strings.HasPrefix(r.URL.Path, "/blobs/")):
 			hub.PublicHandler().ServeHTTP(w, r)
+		case (r.Method == "GET" || r.Method == "HEAD") && channelManifest.MatchString(r.URL.Path):
+			m := channelManifest.FindStringSubmatch(r.URL.Path)
+			path := filepath.Join(c.ReleaseDir, "channels", m[1], "manifest.signed.json")
+			info, err := os.Lstat(path)
+			if err != nil || !info.Mode().IsRegular() {
+				http.NotFound(w, r)
+				return
+			}
+			http.ServeFile(w, r, path)
 		case r.Method == "POST" && (r.URL.Path == "/api/account/login" || r.URL.Path == "/api/account/register" || r.URL.Path == "/api/account/password" || r.URL.Path == "/api/account/binding-code" || r.URL.Path == "/api/diagnostics/context"):
 			r.Body = http.MaxBytesReader(w, r.Body, 4096)
 			proxy.ServeHTTP(w, r)
+		// CDK 兑换码：登录器免 token 端点（账号密码 bcrypt 验证 + 发货在
+		// gateway 进程内完成，见 management/cdk.go——复用 benefits 投递链路）。
+		case r.Method == "POST" && (r.URL.Path == "/api/cdk/redeem" || r.URL.Path == "/api/cdk/characters"):
+			r.Body = http.MaxBytesReader(w, r.Body, 4096)
+			if cdk == nil {
+				http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			cdk.ServeHTTP(w, r)
 		case r.Method == "GET" && r.URL.Path == "/api/status":
 			proxy.ServeHTTP(w, r)
 		case (r.Method == "GET" || r.Method == "HEAD") && releaseFile.MatchString(r.URL.Path):
@@ -246,7 +265,7 @@ func runGateway(ctx context.Context, c config) error {
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}}
 	var servers []*http.Server
 	if c.Listen != "" {
-		servers = append(servers, &http.Server{Addr: c.Listen, Handler: handlerWithHub(c, hub), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 6 * time.Hour, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192, TLSConfig: tlsConfig})
+		servers = append(servers, &http.Server{Addr: c.Listen, Handler: handlerWithHub(c, hub, module.CdkPublicHandler()), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 6 * time.Hour, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192, TLSConfig: tlsConfig})
 	}
 	if c.QQBotListen != "" {
 		host, _, e := net.SplitHostPort(c.QQBotListen)

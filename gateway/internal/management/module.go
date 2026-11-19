@@ -23,6 +23,7 @@ import (
 
 type Module struct {
 	Handler         http.Handler
+	cdk             *CdkStore
 	server          *gmtool.Server
 	archive         *platformpvf.DiskArchive
 	clearProjection *mysql.ClearHistoryProjection
@@ -30,6 +31,14 @@ type Module struct {
 	cancel          context.CancelFunc
 	done            chan struct{}
 	once            sync.Once
+}
+
+// CdkPublicHandler 暴露登录器用的免 token CDK 路由（/api/cdk/*，挂网关公开口）。
+func (m *Module) CdkPublicHandler() http.Handler {
+	if m == nil || m.cdk == nil {
+		return nil
+	}
+	return m.cdk.PublicHandler()
 }
 
 func resolveClearSnapshotPath(cfg Config) string {
@@ -135,6 +144,11 @@ func Open(ctx context.Context, cfg Config, log func(string, ...any)) (_ *Module,
 	if err != nil {
 		return nil, err
 	}
+	cdk, err := NewCdkStore(ctx, registration, func() (repository.Group, bool) { return group, true }, cfg.AccountTable, log)
+	if err != nil {
+		return nil, errors.New("management cdk schema unavailable; check registration database")
+	}
+	m.cdk = cdk
 	if _, err = benefits.Campaigns(ctx); err != nil {
 		return nil, errors.New("management benefit schema unavailable; initialize during installation")
 	}
@@ -145,7 +159,7 @@ func Open(ctx context.Context, cfg Config, log func(string, ...any)) (_ *Module,
 	if err != nil {
 		return nil, err
 	}
-	deps := gmtool.Deps{Catalog: catalog, RegistrationDB: registration, Runtime: runtime, Benefits: benefits, Repos: func() (repository.Group, bool) { return group, true }, PVF: func() (dnfpvf.Source, error) { return source, nil }}
+	deps := gmtool.Deps{Catalog: catalog, RegistrationDB: registration, Runtime: runtime, Benefits: benefits, Cdk: cdk, Repos: func() (repository.Group, bool) { return group, true }, PVF: func() (dnfpvf.Source, error) { return source, nil }}
 	deps.PremiumTypes = func() ([]int64, error) {
 		r, e := runtime.Call(workerCtx, adminapi.Request{Action: "catalog"})
 		return r.PremiumTypes, e
@@ -158,10 +172,15 @@ func Open(ctx context.Context, cfg Config, log func(string, ...any)) (_ *Module,
 	if cfg.LoginKeySHA256 != "" {
 		secret = cfg.LoginKeySHA256
 	}
-	m.server, err = gmtool.NewManaged(ctx, gmtool.Config{Password: secret, LoginKeySHA256: cfg.LoginKeySHA256, SessionStorePath: cfg.SessionStorePath, Table: cfg.AccountTable, PVFPath: cfg.PVFPath, ItemIndexCachePath: cfg.ItemIndexPath, DatabaseLabel: "MariaDB", RequireOffline: true, Logger: log}, deps)
+	m.server, err = gmtool.NewManaged(ctx, gmtool.Config{Password: secret, LoginKeySHA256: cfg.LoginKeySHA256, SessionStorePath: cfg.SessionStorePath, Table: cfg.AccountTable, PVFPath: cfg.PVFPath, ItemIndexCachePath: cfg.ItemIndexPath, DatabaseLabel: "MariaDB", RequireOffline: true, Logger: log, BenefitDeliverSecret: cfg.BenefitDeliverSecret}, deps)
 	if err != nil {
 		return nil, err
 	}
+	go func() {
+		if err := m.server.RunDirectBenefitWatcher(workerCtx, log); err != nil {
+			log("benefit-direct-watcher", "error", err)
+		}
+	}()
 	if m.clearProjection != nil {
 		m.clearProjection.Start(workerCtx)
 	}
