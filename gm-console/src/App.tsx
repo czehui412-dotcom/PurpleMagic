@@ -22,6 +22,7 @@ import {
   Palette,
   X,
   KeyRound,
+  Swords,
   ArrowRightLeft,
   LoaderCircle,
   ExternalLink,
@@ -53,6 +54,7 @@ import { QuestPage } from "./pages/Quests";
 import { GmPage } from "./pages/Gm";
 import { AntiCheatPage } from "./pages/AntiCheat";
 import { ActivitiesPage } from "./pages/Activities";
+import { AbyssDropRatePage } from "./pages/AbyssDropRate";
 import { BenefitsPage } from "./pages/Benefits";
 import { SystemSettings } from "./pages/SystemSettings";
 import { shouldRefreshOnVisibility } from "./api/http";
@@ -118,6 +120,7 @@ const navigation = [
   },
   { id: "anti-cheat", label: "反作弊", icon: ShieldCheck, title: "反作弊", sub: "查看通关与异常频率，管理账号和 IP 封禁。" },
   { id: "activities", label: "活动管理", icon: CalendarDays, title: "游戏活动", sub: "管理全服活动开关，查看实际生效状态。" },
+  { id: "abyss-drop", label: "深渊掉率", icon: Swords, title: "深渊史诗掉率", sub: "动态调整每个深渊房间的史诗掉率，立即生效。" },
   { id: "benefits", label: "福利规则", icon: Gift, title: "福利规则", sub: "全局奖励自动发放，查看每个账号与角色的发放情况。" },
   {
     id: "accounts",
@@ -740,6 +743,8 @@ export function App() {
                     <AntiCheatPage {...props} />
                   ) : section === "activities" ? (
                     <ActivitiesPage {...props} />
+                  ) : section === "abyss-drop" ? (
+                    <AbyssDropRatePage {...props} />
                   ) : section === "benefits" ? (
                     <BenefitsPage {...props} />
                   ) : section === "system" ? (

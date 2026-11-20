@@ -77,6 +77,16 @@ type Request struct {
 	RegistrationQuery  *RegistrationQuery        `json:"registrationQuery,omitempty"`
 	RegistrationInvite *RegistrationInviteChange `json:"registrationInvite,omitempty"`
 	RegistrationUnbind *RegistrationUnbind       `json:"registrationUnbind,omitempty"`
+	// 深渊史诗掉率：nil=读取；非 nil=设置（0..1000，-1 清除回退 PVF）。
+	HellDropRate *int `json:"hellDropRate,omitempty"`
+}
+
+// HellDropRateStatus 与游戏服协议字段保持一致。
+type HellDropRateStatus struct {
+	Rate        int  `json:"rate"`
+	Override    bool `json:"override"`
+	PVFBaseline int  `json:"pvfBaseline"`
+	Scale       int  `json:"scale"`
 }
 
 type Response struct {
@@ -112,4 +122,5 @@ type Response struct {
 	RegistrationCodes   []string             `json:"registrationCodes,omitempty"`
 	RegistrationChanged bool                 `json:"registrationChanged,omitempty"`
 	RegistrationTotal   int                  `json:"registrationTotal,omitempty"`
+	HellDropRate        *HellDropRateStatus  `json:"hellDropRate,omitempty"`
 }

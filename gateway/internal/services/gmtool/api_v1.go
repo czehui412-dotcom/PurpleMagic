@@ -145,6 +145,8 @@ func (s *Server) v1Routes() http.Handler {
 	writes.HandleFunc("POST /api/v1/accounts/{accountId}/password-reset", s.v1ResetPassword)
 	mux.HandleFunc("GET /api/v1/activities", s.v1Activities)
 	writes.HandleFunc("POST /api/v1/activities", s.v1SaveActivities)
+	mux.HandleFunc("GET /api/v1/hell-drop-rate", s.v1HellDropRate)
+	writes.HandleFunc("POST /api/v1/hell-drop-rate", s.v1SetHellDropRate)
 	mux.HandleFunc("GET /api/v1/settings/pvf", s.v1PVFMode)
 	writes.HandleFunc("POST /api/v1/settings/pvf", s.v1PVFMode)
 	mux.HandleFunc("GET /api/v1/quests", s.v1Quests)
