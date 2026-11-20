@@ -79,6 +79,8 @@ type Request struct {
 	RegistrationUnbind *RegistrationUnbind       `json:"registrationUnbind,omitempty"`
 	// 深渊史诗掉率：nil=读取；非 nil=设置（0..1000，-1 清除回退 PVF）。
 	HellDropRate *int `json:"hellDropRate,omitempty"`
+	// 时空裂缝史诗掉率：-1=PVF 原行为；0..1000=触发 PVF 件数表的千分比。
+	RiftDropRate *int `json:"riftDropRate,omitempty"`
 }
 
 // HellDropRateStatus 与游戏服协议字段保持一致。
@@ -88,6 +90,9 @@ type HellDropRateStatus struct {
 	PVFBaseline int  `json:"pvfBaseline"`
 	Scale       int  `json:"scale"`
 }
+
+// RiftDropRateStatus 与 HellDropRateStatus 共用千分比状态结构。
+type RiftDropRateStatus = HellDropRateStatus
 
 type Response struct {
 	InventoryEdit      *InventoryEditStatus         `json:"inventoryEdit,omitempty"`
@@ -123,4 +128,5 @@ type Response struct {
 	RegistrationChanged bool                 `json:"registrationChanged,omitempty"`
 	RegistrationTotal   int                  `json:"registrationTotal,omitempty"`
 	HellDropRate        *HellDropRateStatus  `json:"hellDropRate,omitempty"`
+	RiftDropRate        *RiftDropRateStatus  `json:"riftDropRate,omitempty"`
 }
