@@ -79,16 +79,24 @@ type Request struct {
 	RegistrationUnbind *RegistrationUnbind       `json:"registrationUnbind,omitempty"`
 	// 深渊史诗掉率：nil=读取；非 nil=设置（0..1000，-1 清除回退 PVF）。
 	HellDropRate *int `json:"hellDropRate,omitempty"`
+	// 深渊保底件数档：-1=退出件数档；0=关闭；2..5=每房 1..N 件。
+	HellDropCount *int `json:"hellDropCount,omitempty"`
 	// 时空裂缝史诗掉率：-1=PVF 原行为；0..1000=触发 PVF 件数表的千分比。
 	RiftDropRate *int `json:"riftDropRate,omitempty"`
+	// 时空裂缝保底件数档：-1=退出件数档；0=关闭；2..5=每次 1..N 件。
+	RiftDropCount *int `json:"riftDropCount,omitempty"`
 }
 
 // HellDropRateStatus 与游戏服协议字段保持一致。
+// Mode: pvf / rate / count / off。
 type HellDropRateStatus struct {
-	Rate        int  `json:"rate"`
-	Override    bool `json:"override"`
-	PVFBaseline int  `json:"pvfBaseline"`
-	Scale       int  `json:"scale"`
+	Rate        int    `json:"rate"`
+	Override    bool   `json:"override"`
+	PVFBaseline int    `json:"pvfBaseline"`
+	Scale       int    `json:"scale"`
+	Mode        string `json:"mode"`
+	MinPieces   int    `json:"minPieces,omitempty"`
+	MaxPieces   int    `json:"maxPieces,omitempty"`
 }
 
 // RiftDropRateStatus 与 HellDropRateStatus 共用千分比状态结构。

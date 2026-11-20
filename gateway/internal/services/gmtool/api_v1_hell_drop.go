@@ -102,3 +102,68 @@ func (s *Server) v1SetRiftDropRate(w http.ResponseWriter, r *http.Request) {
 	}
 	v1Reply(w, r, 200, v1Envelope{Data: result.RiftDropRate})
 }
+
+func validEpicPieceCount(count int) bool {
+	return count == -1 || count == 0 || (count >= 2 && count <= 5)
+}
+
+// v1SetHellDropCount switches ordinary abyss between PVF/rate mode and the
+// guaranteed 1..N pieces mode. It replaces, never stacks with, the rate tier.
+func (s *Server) v1SetHellDropCount(w http.ResponseWriter, r *http.Request) {
+	if r.URL.RawQuery != "" {
+		v1Fail(w, r, 400, "invalid_query", "件数档设置不接受查询参数", false)
+		return
+	}
+	var in struct {
+		Count *int `json:"count"`
+	}
+	if !v1DecodeLimit(w, r, &in, 4<<10) {
+		return
+	}
+	if in.Count == nil || !validEpicPieceCount(*in.Count) {
+		v1Fail(w, r, 400, "invalid_count", "件数档须为 -1（退出）、0（关闭）或 2–5", false)
+		return
+	}
+	if s.deps.Runtime == nil {
+		v1Fail(w, r, 503, "hell_drop_unavailable", "当前服务未接入游戏运行时", true)
+		return
+	}
+	result, err := s.deps.Runtime.Call(r.Context(), adminapi.Request{
+		Action: "set_hell_drop_count", HellDropCount: in.Count,
+	})
+	if err != nil || result.HellDropRate == nil {
+		v1Fail(w, r, 503, "hell_drop_unavailable", "深渊件数档设置失败，请重试", true)
+		return
+	}
+	v1Reply(w, r, 200, v1Envelope{Data: result.HellDropRate})
+}
+
+// v1SetRiftDropCount switches rift settlements to the guaranteed 1..N tier.
+func (s *Server) v1SetRiftDropCount(w http.ResponseWriter, r *http.Request) {
+	if r.URL.RawQuery != "" {
+		v1Fail(w, r, 400, "invalid_query", "裂缝件数档设置不接受查询参数", false)
+		return
+	}
+	var in struct {
+		Count *int `json:"count"`
+	}
+	if !v1DecodeLimit(w, r, &in, 4<<10) {
+		return
+	}
+	if in.Count == nil || !validEpicPieceCount(*in.Count) {
+		v1Fail(w, r, 400, "invalid_count", "件数档须为 -1（退出）、0（关闭）或 2–5", false)
+		return
+	}
+	if s.deps.Runtime == nil {
+		v1Fail(w, r, 503, "rift_drop_unavailable", "当前服务未接入游戏运行时", true)
+		return
+	}
+	result, err := s.deps.Runtime.Call(r.Context(), adminapi.Request{
+		Action: "set_rift_drop_count", RiftDropCount: in.Count,
+	})
+	if err != nil || result.RiftDropRate == nil {
+		v1Fail(w, r, 503, "rift_drop_unavailable", "裂缝件数档设置失败，请重试", true)
+		return
+	}
+	v1Reply(w, r, 200, v1Envelope{Data: result.RiftDropRate})
+}
