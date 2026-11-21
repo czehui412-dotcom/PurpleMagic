@@ -109,7 +109,7 @@ func New(c Config) (*Hub, error) {
 		return nil, e
 	}
 	h := &Hub{cfg: c, key: key, profile: p, failures: map[string][]time.Time{}, gmCookies: map[string]*http.Cookie{}, sourceClient: clientForSource}
-	h.state = persisted{Sources: []Source{}, Sessions: map[string]session{}, SourceSequences: map[string]int64{}, SourceDigests: map[string]string{}, Published: Bootstrap{Product: Product, Format: 2, Sequence: 1, Profile: p, News: []News{}}}
+	h.state = persisted{Sources: []Source{}, Sessions: map[string]session{}, SourceSequences: map[string]int64{}, SourceDigests: map[string]string{}, Published: Bootstrap{Product: Product, Format: 1, Sequence: 1, Profile: p, News: []News{}}}
 	b, e := os.ReadFile(filepath.Join(c.DataDir, "state.json"))
 	if e == nil {
 		// Decode persisted metadata independently. Unmarshalling over the new
@@ -160,6 +160,18 @@ func New(c Config) (*Hub, error) {
 			flavor = fromZip
 		}
 		lb.BuildFlavor = flavor
+		h.state.Published.Sequence++
+		if e = h.save(); e != nil {
+			return nil, e
+		}
+	}
+	// One-shot rollback of a format=2 publication back to format=1. A prior
+	// release bumped format before all cores could accept it; legacy cores
+	// hard-reject format!=1 and lost their self-update path. format=1 with the
+	// additive Game field is fully compatible with both old and new cores.
+	// Advance the sequence so every client re-fetches the corrected payload.
+	if h.state.Published.Format == 2 {
+		h.state.Published.Format = 1
 		h.state.Published.Sequence++
 		if e = h.save(); e != nil {
 			return nil, e
@@ -224,7 +236,11 @@ func (h *Hub) syncGameArtifact() bool {
 		return false
 	}
 	h.state.Published.Game = next
-	h.state.Published.Format = 2
+	// Keep format=1: legacy cores (1.0.25/1.0.26) hard-reject format!=1 in
+	// Trust.Verify, which would sever their self-update path to this new core.
+	// The Game field is additive; old cores ignore it, new cores read it via
+	// ResolveGameStrategy. Format is bumped only in a future release once all
+	// players are known to run a format=2-capable core.
 	return true
 }
 
