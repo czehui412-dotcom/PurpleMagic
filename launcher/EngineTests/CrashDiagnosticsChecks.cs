@@ -8,24 +8,21 @@ internal static class CrashDiagnosticsChecks
 {
     internal static async Task Consent(string temp, PlayerProfile profile, Action<bool, string> check)
     {
-        var previous = Path.Combine(temp, "consent-context-migration"); Directory.CreateDirectory(previous);
-        File.WriteAllBytes(Path.Combine(previous, "preferences.json"), JsonSerializer.SerializeToUtf8Bytes(new Preferences(
-            Diagnostics: new(true, ConsentVersion: 2), AntiCheatConsentVersion: 1), WireJson.Default.Preferences));
-        using (var migrated = new LauncherEngine(profile, previous))
-            check(migrated.State.Preferences.Diagnostics?.Enabled == false && migrated.State.Preferences.AntiCheatConsentVersion == 1,
-                "character disclosure requires new diagnostic consent and preserves anticheat consent");
+        // New architecture: diagnostics policy comes from the signed gateway
+        // profile; only the consent record lives in identity.json. There is no
+        // local enabled-toggle to migrate from preferences.json.
         var path = Path.Combine(temp, "consent-migration"); Directory.CreateDirectory(path);
-        var prefs = new Preferences(Diagnostics: new(true, ConsentVersion: 1));
-        File.WriteAllBytes(Path.Combine(path, "preferences.json"), JsonSerializer.SerializeToUtf8Bytes(prefs, WireJson.Default.Preferences));
         using var engine = new LauncherEngine(profile, path);
-        check(engine.State.Preferences.Diagnostics?.Enabled == false, "old enabled preference is migrated off before collection expands");
-        var refused = false; try { await engine.SavePreferences(prefs); } catch (InvalidOperationException) { refused = true; }
-        check(refused, "host refuses enable request without consent revision");
-        refused = false; try { await engine.ElevateDiagnostics("unrelated-session"); } catch (InvalidOperationException) { refused = true; }
+        var refused = false; try { await engine.ElevateDiagnostics("unrelated-session"); } catch (InvalidOperationException) { refused = true; }
         check(refused, "elevation endpoint rejects unrelated session without invoking UAC");
-        await engine.SavePreferences(prefs with { Diagnostics = new(true, ConsentVersion: DiagnosticOptions.CurrentConsent) });
-        var saved = JsonSerializer.Deserialize(File.ReadAllBytes(Path.Combine(path, "preferences.json")), WireJson.Default.Preferences)!;
-        check(saved.Diagnostics is { Enabled: true, HasConsent: true }, "explicit diagnostic consent persists through core RPC contract");
+        await engine.SavePreferences(new Preferences(AntiCheatConsentVersion: 1));
+        var identity = JsonSerializer.Deserialize(File.ReadAllBytes(Path.Combine(path, "identity.json")), WireJson.Default.IdentityState)!;
+        check(identity.Consent?.AntiCheat == 1, "explicit protection consent persists through core RPC contract");
+
+        // Gateway policy off disables collection regardless of local identity.
+        var offProfile = profile with { DiagnosticsPolicy = "off" };
+        using var off = new LauncherEngine(offProfile, Path.Combine(temp, "diag-policy-off"));
+        check(off.State.Preferences.Diagnostics?.Enabled == false, "gateway diagnosticsPolicy=off disables collection");
     }
     internal static async Task Run(string temp, Action<bool, string> check)
     {

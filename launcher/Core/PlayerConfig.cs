@@ -29,6 +29,11 @@ public sealed record PlayerProfile(string ApiUrl, string CertificateSha256, stri
     public int ChannelServerId { get; init; }
     // Explicit temporary compatibility during a staged server migration.
     public int? PreviousChannelServerId { get; init; }
+    // Gateway-signed UI/update policy (设计文档 §6.3). No local override exists.
+    public string UpdatePolicy { get; init; } = "default-on";
+    public bool ReducedEffects { get; init; } = false;
+    public string DiagnosticsPolicy { get; init; } = "optional";
+    public int RequiredAntiCheatConsent { get; init; } = 0;
 }
 
 public sealed class PlayerPreferences

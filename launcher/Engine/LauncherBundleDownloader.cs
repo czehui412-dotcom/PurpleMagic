@@ -96,17 +96,16 @@ public sealed class LauncherBundleDownloader : IDisposable
         catch (IOException) { throw new IOException("登录器下载未完成，可继续下载。"); }
     }
 
-    // Uses the existing content partial-file name, so a 0.2.8 download can resume
-    // through Baidu after upgrading. Only the signed blob identity is accepted.
-    public async Task DownloadContent(ContentRelease release, ContentFile file, string partial, Action<long>? progress, CancellationToken cancel)
+    // Unified engine's blob transport. Only the signed artifact identity is accepted.
+    public async Task Download(GameArtifact game, ArtifactFile file, string partial, Action<long>? progress, CancellationToken cancel)
     {
-        var size = ContentUpdater.TransferSize(file);
+        var size = file.Compression == "gzip" ? file.BlobLength : file.Length;
         var hash = file.Compression == "gzip" ? file.BlobSha256 : file.Sha256;
-        SignedUpdate.RequireHttps(release.Endpoint);
-        var source = new Uri(release.Endpoint);
+        SignedUpdate.RequireHttps(game.Delivery.Endpoint);
+        var source = new Uri(game.Delivery.Endpoint);
         if (source.Host != origin.Host || source.Port != origin.Port || source.AbsolutePath != "/" || source.Query != "" || source.Fragment != "" ||
-            !Trust.Hash(hash) || size < 1 || size > 8L * 1024 * 1024 * 1024 || !file.Downloadable ||
-            !release.Files.Contains(file) || file.Compression is not ("" or "none" or "gzip"))
+            !Trust.Hash(hash) || size < 1 || size > 8L * 1024 * 1024 * 1024 ||
+            !game.Files.Contains(file) || file.Compression is not ("" or "none" or "gzip"))
             throw new InvalidDataException("资源下载身份无效。");
         var entry = new Uri(source, "/blobs/" + hash.ToLowerInvariant());
         SafeFiles.NoLinks(partial); Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(partial))!);

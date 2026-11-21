@@ -15,7 +15,7 @@ static class NewsIntegration
             if (!IPAddress.TryParse(new Uri(root.ApiUrl).Host, out var ip) || !IPAddress.IsLoopback(ip) || !Path.GetFullPath(state).StartsWith(Path.GetTempPath(), StringComparison.OrdinalIgnoreCase)) throw new Exception("isolated news fixture required");
             using (var engine = new LauncherEngine(root, state))
             {
-                await engine.SavePreferences(new Preferences(AutoCheck:false));
+                await engine.SavePreferences(new Preferences(AutoUpdate:false));
                 await engine.Check();
                 if (engine.State.News.Length != 1 || engine.State.News[0] != new News("跨语言公告", "## 第一行\n\n**第二行**", "指南", "10 / 15") { Format = "markdown" }) throw new Exception("signed Hub news did not reach launcher state");
             }

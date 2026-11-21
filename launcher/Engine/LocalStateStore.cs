@@ -57,10 +57,18 @@ public sealed class LocalStateStore
         SaveIdentity();
     }
 
-    private static long SourceSeq(Bootstrap b) => b.Content?.SourceSequence ?? 0;
+    // A manually chosen client directory overrides auto-detection. It is only
+    // persisted when the user explicitly picks one; empty means "auto".
+    public void SetClientDirectory(string directory)
+    {
+        Identity = Identity with { ClientDirectory = directory };
+        SaveIdentity();
+    }
+
+    private static long SourceSeq(Bootstrap b) => b.Game?.Sequence ?? 0;
 
     public bool AntiRollbackAccept(Bootstrap next) =>
-        next.Sequence >= Anchor.Sequence && SourceSeq(next) >= Anchor.ContentSourceSequence;
+        next.Sequence >= Anchor.Sequence && SourceSeq(next) >= Anchor.GameSourceSequence;
 
     public void AdvanceAnchor(Bootstrap next)
     {
@@ -69,7 +77,7 @@ public sealed class LocalStateStore
         Anchor = Anchor with
         {
             Sequence = next.Sequence,
-            ContentSourceSequence = SourceSeq(next)
+            GameSourceSequence = SourceSeq(next)
         };
         SaveAnchor();
     }
@@ -113,7 +121,8 @@ public sealed class LocalStateStore
                 1,
                 pref.RememberAccount ? (pref.Account ?? "").Trim() : "",
                 pref.RememberAccount,
-                new ConsentState(pref.AntiCheatConsentVersion, pref.Diagnostics?.HasConsent == true ? 1 : 0, pref.Diagnostics?.ProblemType ?? "auto"));
+                new ConsentState(pref.AntiCheatConsentVersion, pref.Diagnostics?.HasConsent == true ? 1 : 0, pref.Diagnostics?.ProblemType ?? "auto"),
+                pref.ClientDirectory ?? "");
             SaveIdentity();
         }
         else

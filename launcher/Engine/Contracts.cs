@@ -9,38 +9,34 @@ namespace Dnf90.Launcher;
 
 public sealed record News(string Title, string Body, string Category, string Date)
 { public string Format { get; init; } = "text"; }
-public sealed record ContentFile(string Path, long Length, string Sha256, bool Downloadable, string Compression, string BlobSha256, long BlobLength);
-public sealed record ContentRelease(string Version, string SourceId, string Channel, long SourceSequence, string SourcePayloadSha256, string Endpoint, string CertificateSha256, ContentFile[] Files);
 public sealed record BundleRelease(string Version, string Url, long Size, string Sha256)
 {
     public string BuildFlavor { get; set; } = "standard";
 }
-public sealed record ArchiveFile(string Path, long Length, string Sha256);
-// Whole-archive game resource delivery over operator-supplied direct links.
-// Only the signed digests are authoritative; the URLs are untrusted transport.
-public sealed record GameArchive(string PrimaryUrl, string FallbackUrl, string Sha256, long Size, ArchiveFile[] Files);
-// Unified format=2 game resource artifact. Delivery.Strategy is "archive" or
-// "blob"; per-file SHA256 is always authoritative, transport digests are not.
+// Unified game-resource artifact. Delivery.Strategy is "archive" or "blob";
+// per-file SHA256 is always authoritative, transport digests are integrity only.
 public sealed record ArtifactFile(string Path, long Length, string Sha256, string BlobSha256 = "", long BlobLength = 0, string Compression = "");
 public sealed record GameDelivery(string Strategy, string Endpoint = "", string CertificateSha256 = "", string[]? URLs = null, string PackageSha256 = "", long PackageSize = 0);
 public sealed record GameArtifact(string Version, string SourceId, long Sequence, ArtifactFile[] Files, GameDelivery Delivery);
-public sealed record Bootstrap(string Product, int Format, long Sequence, PlayerProfile Profile, News[] News, ContentRelease? Content, BundleRelease? Launcher, GameArchive? Archive = null, GameArtifact? Game = null);
-// AutoCheck is the persisted legacy key; it now controls automatic check and installation of both update types.
-public sealed record Preferences(string ClientDirectory = "", string Account = "", bool RememberAccount = true, bool AutoCheck = true, bool ReducedEffects = false, DiagnosticOptions? Diagnostics = null, int AntiCheatConsentVersion = 0);
+// format=2 only. Game is the sole game-resource authority; the legacy Content
+// and Archive fields and the format=1 compatibility path were removed.
+public sealed record Bootstrap(string Product, int Format, long Sequence, PlayerProfile Profile, News[] News, BundleRelease? Launcher, GameArtifact Game);
+// UI view projected from gateway-signed policy + identity.json. It is never a
+// source of authority and is never persisted (see 登录器架构重构设计.md).
+public sealed record Preferences(string Account = "", bool RememberAccount = true, bool AutoUpdate = true, bool ReducedEffects = false, DiagnosticOptions? Diagnostics = null, int AntiCheatConsentVersion = 0, string ClientDirectory = "");
 
-// New minimal local state. Only three things survive a restart:
-//   identity.json - user account + compliance consent (never configuration)
-//   anchor.json   - anti-rollback sequence anchors + repeated-failure guard
-// Everything else (profile/news/versions/manifests/flags) is gateway-signed
-// and held in memory only; see 登录器架构重构设计.md.
+// Local persistent state: identity.json (account + consent + optional manual
+// client-directory override) and anchor.json (anti-rollback + failure guard).
+// Manual directory is a user override of the auto-detected launch directory.
 public sealed record ConsentState(int AntiCheat = 0, int Diagnostics = 0, string DiagnosticsProblemType = "auto");
-public sealed record IdentityState(int V = 1, string Account = "", bool RememberAccount = true, ConsentState? Consent = null);
+public sealed record IdentityState(int V = 1, string Account = "", bool RememberAccount = true, ConsentState? Consent = null, string ClientDirectory = "");
 public sealed record UpdateAttempt(string Target = "", int Failures = 0, string LastFailureUtc = "");
-public sealed record AnchorState(int V = 1, long Sequence = 0, long ContentSourceSequence = 0, UpdateAttempt? Attempt = null);
+public sealed record AnchorState(int V = 1, long Sequence = 0, long GameSourceSequence = 0, UpdateAttempt? Attempt = null);
 public sealed record State(string Phase, string Message, double Progress, long Downloaded, long Total, bool CanLogin, bool HasUpdate, bool HasLauncherUpdate, string Source, string Version, Preferences Preferences, News[] News)
 {
     public string LauncherVersion => LauncherEngine.VersionText;
     public string ClientVersion { get; init; } = "";
+    public string LauncherHome { get; init; } = "";
     public string BuildFlavor => LauncherBuild.Flavor;
     public bool AntiCheatEnabled { get; init; }
     public bool QQBindingEnabled { get; init; }
@@ -51,7 +47,6 @@ public sealed record Request(int Id, string Method, JsonElement Args);
 public sealed record Response(int Id, bool Ok, string? Error = null, State? State = null, bool Restart = false, ConfigurationReset? ConfigurationReset = null, DiagnosticExport? DiagnosticExport = null, LoginReply? AccountResult = null, string? ErrorCode = null, long RetryAfter = 0, string? DiagnosticIncidentId = null, string? DiagnosticEntryId = null, ContractObservationItem? DiagnosticObservation = null, CdkReply? CdkResult = null, CdkCharactersReply? CdkCharacters = null);
 public sealed record ConfigurationReset(bool Reset, string? BackupPath);
 public sealed record Event(string Type, State State);
-// Invite：注册邀请码（网吧等共享出口场景绕过机器码/IP 双重限制），登录时为空。
 public sealed record Credentials(string Account, string Password, string? Invite = null);
 public sealed record PasswordChange(string Account, string Password, string NewPassword);
 public sealed record CdkInput(string Account, string Password, string Code, string CharacterId);
@@ -111,7 +106,7 @@ public static class Trust
         using var rsa = RSA.Create(); rsa.ImportFromPem(root.UpdatePublicKey);
         if (!rsa.VerifyData(raw, Convert.FromBase64String(e.Signature), HashAlgorithmName.SHA256, RSASignaturePadding.Pss)) throw new InvalidDataException("本服发布签名不匹配。");
         var b = JsonSerializer.Deserialize(raw, WireJson.Default.Bootstrap) ?? throw new InvalidDataException("发布清单无效。");
-        if (b.Product != "DNF90-Flutter" || b.Format is not (1 or 2) || b.Sequence < 1 || b.Profile is null || b.News is null || b.News.Length > 30)
+        if (b.Product != "DNF90-Flutter" || b.Format != 2 || b.Sequence < 1 || b.Profile is null || b.News is null || b.News.Length > 30 || b.Game is null)
             throw new InvalidDataException("发布产品、格式或序号无效。");
         // Download source changes never redirect account credentials or replace trust roots.
         if (b.Profile.ApiUrl.TrimEnd('/') != root.ApiUrl.TrimEnd('/') || b.Profile.UpdatePublicKey != root.UpdatePublicKey ||
@@ -124,80 +119,30 @@ public static class Trust
             throw new InvalidDataException("最低登录器版本无效。");
         if (b.Profile.ChannelHistory is { Adapter.Length: > 0 } history &&
             !Regex.IsMatch(history.Adapter, "^[a-z0-9-]{1,64}$")) throw new InvalidDataException("频道兼容方案标识无效。");
-        if (b.Profile.SecondClient is { } secondClient && !secondClient.IsWellFormed())
-            throw new InvalidDataException("双开兼容配置无效。");
-        if (b.Content is { } c)
-        {
-            SignedUpdate.RequireHttps(c.Endpoint);
-            var endpoint = new Uri(c.Endpoint);
-            if (endpoint.AbsolutePath != "/" || endpoint.Query != "" || endpoint.Fragment != "" || (c.CertificateSha256 != "" && !Hash(c.CertificateSha256)) ||
-                c.Files is null || c.Files.Length is < 2 or > 2000 || c.SourceSequence < 1 || c.Channel is not ("stable" or "preview") || !Hash(c.SourcePayloadSha256)) throw new InvalidDataException("内容源配置无效。");
-            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var file in c.Files)
-            {
-                SafeFiles.ValidateRelative(file.Path);
-                var allowed = file.Path.Equals("DNF.exe", StringComparison.OrdinalIgnoreCase) || file.Path.Equals("Script.pvf", StringComparison.OrdinalIgnoreCase) ||
-                    file.Path.Equals("dstr.dat", StringComparison.OrdinalIgnoreCase) || file.Path.Equals("CombatPower.dll", StringComparison.OrdinalIgnoreCase) ||
-                    file.Path.Equals("DpsMeter.dll", StringComparison.OrdinalIgnoreCase) || (file.Path.StartsWith("ImagePacks2/", StringComparison.OrdinalIgnoreCase) && file.Path.EndsWith(".npk", StringComparison.OrdinalIgnoreCase));
-                if (!allowed || !names.Add(file.Path) || !Hash(file.Sha256) || file.Length is < 0 or > 8L * 1024 * 1024 * 1024 || file.Compression is not ("" or "none" or "gzip")) throw new InvalidDataException("内容文件路径、大小或格式无效。");
-                if (file.Compression == "gzip" && (!Hash(file.BlobSha256) || file.BlobLength is < 1 or > 8L * 1024 * 1024 * 1024)) throw new InvalidDataException("压缩文件信息无效。");
-            }
-            foreach (var (name, hash) in new[] { ("DNF.exe", b.Profile.ExeSha256), ("Script.pvf", b.Profile.PvfSha256) })
-                if (!c.Files.Any(f => f.Path.Equals(name, StringComparison.OrdinalIgnoreCase) && f.Sha256.Equals(hash, StringComparison.OrdinalIgnoreCase))) throw new InvalidDataException("内容与本服 EXE/PVF 兼容指纹不一致。");
-        }
-        if (b.Launcher is { } bundle)
-        {
-            SignedUpdate.RequireHttps(bundle.Url);
-            if (!Version.TryParse(bundle.Version, out _) || !Hash(bundle.Sha256) || bundle.Size is < 1 or > SignedUpdate.MaxPackageBytes || bundle.BuildFlavor is not ("standard" or "anticheat")) throw new InvalidDataException("登录器发布信息无效。");
-        }
-        if (b.Archive is { } archive)
-        {
-            // Direct links are untrusted transport; http(s) is allowed but the
-            // signed digests below are the only authority for content identity.
-            if (!ValidArchiveUrl(archive.PrimaryUrl) || !ValidArchiveUrl(archive.FallbackUrl) ||
-                (archive.PrimaryUrl != "" && archive.PrimaryUrl == archive.FallbackUrl))
-                throw new InvalidDataException("游戏资源直链地址无效。");
-            if (!Hash(archive.Sha256) || archive.Size is < 1 or > 8L * 1024 * 1024 * 1024 ||
-                archive.Files is null || archive.Files.Length is < 1 or > 2000)
-                throw new InvalidDataException("游戏资源包信息无效。");
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var file in archive.Files)
-            {
-                SafeFiles.ValidateRelative(file.Path);
-                if (!seen.Add(file.Path) || !Hash(file.Sha256) || file.Length is < 1 or > 8L * 1024 * 1024 * 1024)
-                    throw new InvalidDataException("游戏资源包文件清单无效。");
-            }
-            // EXE/PVF delivered by the archive must match the trust root.
-            foreach (var (name, hash) in new[] { ("DNF.exe", b.Profile.ExeSha256), ("Script.pvf", b.Profile.PvfSha256) })
-                if (!archive.Files.Any(f => f.Path.Equals(name, StringComparison.OrdinalIgnoreCase) && f.Sha256.Equals(hash, StringComparison.OrdinalIgnoreCase)))
-                    throw new InvalidDataException("资源包与本服 EXE/PVF 指纹不一致。");
-        }
-        // format=2 carries a unified Game artifact. Validate it with the same
-        // trust-root rules, then project it onto the legacy Archive/Content
-        // fields so the current update engine can consume format=2 without a
-        // parallel code path (removed once the unified engine lands in P3).
-        if (b.Game is { } game) ValidateGame(game, b);
-        return ProjectGame(b);
-    }
-    private static void ValidateGame(GameArtifact game, Bootstrap b)
-    {
-        if (game.Delivery is null || game.Files is null || game.Files.Length is < 1 or > 2000)
+        if (b.Profile.SecondClient is { } secondClient && !secondClient.IsWellFormed()) throw new InvalidDataException("双开兼容配置无效。");
+        if (b.Game.Delivery is null || b.Game.Files is null || b.Game.Files.Length is < 1 or > 2000)
             throw new InvalidDataException("游戏资源制品信息无效。");
-        var strategy = game.Delivery.Strategy;
+        var strategy = b.Game.Delivery.Strategy;
         if (strategy is not ("archive" or "blob")) throw new InvalidDataException("游戏资源投递策略无效。");
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var file in game.Files)
+        foreach (var file in b.Game.Files)
         {
             SafeFiles.ValidateRelative(file.Path);
-            if (!seen.Add(file.Path) || !Hash(file.Sha256) || file.Length is < 0 or > 8L * 1024 * 1024 * 1024)
+            var allowed = file.Path.Equals("DNF.exe", StringComparison.OrdinalIgnoreCase) ||
+                file.Path.Equals("Script.pvf", StringComparison.OrdinalIgnoreCase) ||
+                file.Path.Equals("dstr.dat", StringComparison.OrdinalIgnoreCase) ||
+                file.Path.Equals("CombatPower.dll", StringComparison.OrdinalIgnoreCase) ||
+                file.Path.Equals("DpsMeter.dll", StringComparison.OrdinalIgnoreCase) ||
+                (file.Path.StartsWith("ImagePacks2/", StringComparison.OrdinalIgnoreCase) && file.Path.EndsWith(".npk", StringComparison.OrdinalIgnoreCase));
+            if (!allowed || !seen.Add(file.Path) || !Hash(file.Sha256) || file.Length is < 0 or > 8L * 1024 * 1024 * 1024 || file.Compression is not ("" or "none" or "gzip"))
                 throw new InvalidDataException("游戏资源制品文件清单无效。");
             if (strategy == "blob" && file.Compression == "gzip" && (!Hash(file.BlobSha256) || file.BlobLength is < 1 or > 8L * 1024 * 1024 * 1024))
                 throw new InvalidDataException("游戏资源压缩信息无效。");
         }
         foreach (var (name, hash) in new[] { ("DNF.exe", b.Profile.ExeSha256), ("Script.pvf", b.Profile.PvfSha256) })
-            if (!game.Files.Any(f => f.Path.Equals(name, StringComparison.OrdinalIgnoreCase) && f.Sha256.Equals(hash, StringComparison.OrdinalIgnoreCase)))
+            if (!b.Game.Files.Any(f => f.Path.Equals(name, StringComparison.OrdinalIgnoreCase) && f.Sha256.Equals(hash, StringComparison.OrdinalIgnoreCase)))
                 throw new InvalidDataException("游戏资源制品与本服 EXE/PVF 指纹不一致。");
-        var d = game.Delivery;
+        var d = b.Game.Delivery;
         if (strategy == "archive")
         {
             var urls = d.URLs ?? [];
@@ -206,27 +151,16 @@ public static class Trust
             if (!Hash(d.PackageSha256) || d.PackageSize is < 1 or > 8L * 1024 * 1024 * 1024)
                 throw new InvalidDataException("游戏资源包摘要或大小无效。");
         }
-        else // blob
+        else
         {
             SignedUpdate.RequireHttps(d.Endpoint);
             if (new Uri(d.Endpoint).AbsolutePath != "/" || (d.CertificateSha256 != "" && !Hash(d.CertificateSha256)))
                 throw new InvalidDataException("游戏资源分文件源无效。");
         }
-    }
-    private static Bootstrap ProjectGame(Bootstrap b)
-    {
-        var game = b.Game;
-        if (game is null) return b;
-        var d = game.Delivery;
-        if (d.Strategy == "archive")
+        if (b.Launcher is { } bundle)
         {
-            var files = game.Files.Select(f => new ArchiveFile(f.Path, f.Length, f.Sha256)).ToArray();
-            b = b with { Archive = new GameArchive(d.URLs?[0] ?? "", d.URLs?[1] ?? "", d.PackageSha256, d.PackageSize, files) };
-        }
-        else if (b.Content is null) // blob: keep the signed legacy Content when present (it carries upstream payload digest)
-        {
-            var files = game.Files.Select(f => new ContentFile(f.Path, f.Length, f.Sha256, true, f.Compression, f.BlobSha256, f.BlobLength)).ToArray();
-            b = b with { Content = new ContentRelease(game.Version, game.SourceId, "stable", game.Sequence, "", d.Endpoint, d.CertificateSha256, files) };
+            SignedUpdate.RequireHttps(bundle.Url);
+            if (!Version.TryParse(bundle.Version, out _) || !Hash(bundle.Sha256) || bundle.Size is < 1 or > SignedUpdate.MaxPackageBytes || bundle.BuildFlavor is not ("standard" or "anticheat")) throw new InvalidDataException("登录器发布信息无效。");
         }
         return b;
     }
@@ -242,7 +176,6 @@ public static class Trust
         // Envelope signature can be randomized; compare exact signed payload bytes.
         static string Payload(byte[] raw) => JsonSerializer.Deserialize(raw, CoreJson.Default.SignedEnvelope)!.Payload;
         if (next.Sequence < previous.Sequence || next.Sequence == previous.Sequence && Payload(nextRaw) != Payload(previousRaw)) throw new InvalidDataException("发布序号倒退或同序号内容发生变化。");
-        if (next.Content is { } a && previous.Content is { } b && a.SourceId == b.SourceId && a.Channel == b.Channel &&
-            (a.SourceSequence < b.SourceSequence || a.SourceSequence == b.SourceSequence && a.SourcePayloadSha256 != b.SourcePayloadSha256)) throw new InvalidDataException("内容源序号倒退或内容冲突。");
+        if (next.Game.Sequence < previous.Game.Sequence) throw new InvalidDataException("游戏资源版本倒退。");
     }
 }

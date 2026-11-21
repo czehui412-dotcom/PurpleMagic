@@ -103,17 +103,7 @@ internal static class LauncherBundleDownloadChecks
             catch (OperationCanceledException) { check(true, "already cancelled app request makes no network request"); }
         }
 
-        // No server activation is implied: the unchanged legacy byte downloader still works with this protocol's default response.
-        using (var legacy = new HttpClient(new Handler((r, _) =>
-        {
-            check(!Negotiates(r), "legacy downloader sends no transport capability");
-            return Task.FromResult(Payload(r));
-        })))
-        {
-            var path = Path.Combine(parent, "legacy.part"); File.WriteAllBytes(path, bytes[..5]);
-            await ContentUpdater.Download(legacy, new Uri(release.Url), bytes.Length, hash, path, null, default);
-            check(File.ReadAllBytes(path).SequenceEqual(bytes), "legacy default 206 bytes retain existing hash and resume behavior");
-        }
+
 
         calls = 0;
         using (var client = Client(r =>

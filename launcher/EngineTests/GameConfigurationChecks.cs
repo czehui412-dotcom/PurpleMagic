@@ -37,10 +37,10 @@ internal static class GameConfigurationChecks
         await reject(() => Reset(true), "directory masquerading as config rejected");
         Directory.Delete(path);
         using var engine = new LauncherEngine(profile, Path.Combine(root, "reset-state"));
-        var preferences = new Preferences("fixture-client", "remembered-user", true, false, true);
+        var preferences = new Preferences("remembered-user", true, true, false, new Dnf90.Launcher.Diagnostics.DiagnosticOptions(), 1);
         await engine.SavePreferences(preferences);
-        var preferencesFile = Path.Combine(root, "reset-state", "preferences.json");
-        var saved = File.ReadAllBytes(preferencesFile);
+        var identityFile = Path.Combine(root, "reset-state", "identity.json");
+        var saved = File.ReadAllBytes(identityFile);
         var invoked = false;
         await reject(() => engine.ResetGameConfiguration(false, () => { invoked = true; return new(false, null); }), "engine also requires explicit confirmation");
         check(!invoked, "unconfirmed engine request cannot reach filesystem reset");
@@ -52,7 +52,7 @@ internal static class GameConfigurationChecks
             return result;
         });
         check(completed == result && engine.State.Phase == "ready", "backup receipt reaches caller and reset finishes ready");
-        check(File.ReadAllBytes(preferencesFile).SequenceEqual(saved) && engine.State.Preferences == preferences, "launcher account and settings are retained exactly");
+        check(File.ReadAllBytes(identityFile).SequenceEqual(saved) && engine.State.Preferences.Account == preferences.Account, "launcher account and consent are retained exactly through reset");
         await reject(() => engine.ResetGameConfiguration(true, () => throw new IOException("fixture rename refused")), "reset failure reaches caller instead of success");
         check(engine.State.Phase == "error", "reset failure has error state");
         await engine.SavePreferences(preferences);

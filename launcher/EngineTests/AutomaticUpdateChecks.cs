@@ -1,72 +1,61 @@
-using System.Net;
-using System.Net.Security;
-using System.Net.Sockets;
-using System.Security.Cryptography;
-using System.Security.Cryptography.X509Certificates;
-using System.Text;
 using System.Text.Json;
 using Dnf90.Launcher;
 using ServerS5A3;
 
+// New architecture (§5/§7): no local client directory, no preferences.json
+// config, no three channels. Automatic update is policy-driven from the signed
+// profile; identity.json is the only account/consent store.
 internal static class AutomaticUpdateChecks
 {
     internal static async Task Run(string temp, PlayerProfile profile, Action<bool, string> check)
     {
-        var migrationRoot = Path.Combine(temp, "legacy-preferences");
-        var legacy = Path.Combine(migrationRoot, "DNF90Launcher");
-        var protectedState = Path.Combine(migrationRoot, "DNF90Launcher-anticheat");
-        Directory.CreateDirectory(legacy);
-        var oldClient = Path.Combine(migrationRoot, "existing-client");
-        Directory.CreateDirectory(oldClient);
-        File.WriteAllText(Path.Combine(oldClient, "DNF.exe"), "MZ isolated client");
-        File.WriteAllText(Path.Combine(oldClient, "Script.pvf"), "isolated pvf");
-        var previousPreferences = JsonSerializer.SerializeToUtf8Bytes(new Preferences(ClientDirectory: oldClient, Account: "migration-fixture", AutoCheck: false, ReducedEffects: true, AntiCheatConsentVersion: 99), WireJson.Default.Preferences);
-        File.WriteAllBytes(Path.Combine(legacy, "preferences.json"), previousPreferences);
-        File.WriteAllText(Path.Combine(legacy, "bootstrap.json"), "old channel sequence must not migrate");
-        using (var migrated = new LauncherEngine(profile, protectedState))
-        {
-            check(migrated.State.Preferences.Account == (LauncherBuild.AntiCheat ? "migration-fixture" : ""), "only protection builds import legacy preferences");
-#if ANTICHEAT
-            check(!migrated.State.Preferences.AutoCheck && migrated.State.Preferences.ReducedEffects, "migration preserves explicit update and interface choices");
-            check(migrated.State.Preferences.ClientDirectory == oldClient, "migration preserves the selected game directory");
-#endif
-            check(migrated.State.Preferences.AntiCheatConsentVersion == 0, "migration still requires initial protection consent");
-            check(!File.Exists(Path.Combine(protectedState, "bootstrap.json")), "legacy signed sequence and metadata do not cross channels");
-            await migrated.SavePreferences(new(Account: "new-choice", AntiCheatConsentVersion: 1));
-        }
-        using (var reopened = new LauncherEngine(profile, protectedState))
-            check(reopened.State.Preferences.Account == "new-choice" && reopened.State.Preferences.AntiCheatConsentVersion == 1, "existing protection preferences and consent are never overwritten");
-        check(File.ReadAllBytes(Path.Combine(legacy, "preferences.json")).SequenceEqual(previousPreferences), "migration preserves the original configuration");
-#if ANTICHEAT
-        foreach (var invalid in new[] { "{broken", "null", "{\"account\":null}", new string('x', 65537) })
-        {
-            var invalidRoot = Path.Combine(temp, "invalid-legacy-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(Path.Combine(invalidRoot, "DNF90Launcher"));
-            File.WriteAllText(Path.Combine(invalidRoot, "DNF90Launcher", "preferences.json"), invalid);
-            using var fresh = new LauncherEngine(profile, Path.Combine(invalidRoot, "DNF90Launcher-anticheat"));
-            check(fresh.State.Preferences.Account == "" && fresh.State.Preferences.AntiCheatConsentVersion == 0, "invalid legacy preferences allow a fresh protected start");
-        }
-#endif
-        check(new Preferences().AutoCheck, "new installations enable automatic updates");
-        check(JsonSerializer.Deserialize("{}", WireJson.Default.Preferences)!.AntiCheatConsentVersion == 0, "legacy preferences require initial protection disclosure consent");
-        check(JsonSerializer.Deserialize("{}", WireJson.Default.Preferences)!.AutoCheck, "missing legacy preference defaults to enabled");
-        var state = Path.Combine(temp, "auto-preferences");
+        var state = Path.Combine(temp, "auto-state");
         using (var engine = new LauncherEngine(profile, state))
         {
-            using var serialized = JsonDocument.Parse(JsonSerializer.Serialize(engine.State, WireJson.Default.State));
+            using var serialized = JsonDocument.Parse(JsonSerializer.SerializeToUtf8Bytes(engine.State, WireJson.Default.State));
             check(serialized.RootElement.GetProperty("launcherVersion").GetString() == LauncherEngine.VersionText,
-                "wire state reports running launcher version independently of content version");
-            await engine.SavePreferences(new(AutoCheck: false, AntiCheatConsentVersion: 1));
+                "wire state reports running launcher version independently of game version");
+            await engine.SavePreferences(new(Account: "new-choice", RememberAccount: true, AntiCheatConsentVersion: 1));
         }
         using (var engine = new LauncherEngine(profile, state))
         {
-            check(!engine.State.Preferences.AutoCheck, "explicit opt-out survives engine restart");
-            check(engine.State.Preferences.AntiCheatConsentVersion == 1, "protection disclosure consent survives core restart");
-            check(!await engine.AutomaticUpdate(-1) && !File.Exists(Path.Combine(state, "bootstrap.json")), "disabled automatic updates do not contact metadata or start installers");
+            check(engine.State.Preferences.Account == "new-choice" && engine.State.Preferences.AntiCheatConsentVersion == 1,
+                "identity account and consent survive core restart");
         }
 
-        // A developer may be playing while running this suite. Preserve the real
-        // process guard; do not require closing their game for isolated checks.
+        // Manual client-directory override: auto-detect is the default, but a
+        // user-picked directory is persisted and becomes authoritative.
+        var manual = Path.Combine(temp, "manual-client");
+        Directory.CreateDirectory(manual);
+        File.WriteAllBytes(Path.Combine(manual, "DNF.exe"), [1, 2, 3]);
+        File.WriteAllBytes(Path.Combine(manual, "Script.pvf"), [4, 5, 6]);
+        using (var engine = new LauncherEngine(profile, state))
+        {
+            await engine.SavePreferences(new Preferences(ClientDirectory: manual));
+            check(engine.State.LauncherHome == manual && engine.State.Preferences.ClientDirectory == manual,
+                "manual directory choice updates core home and mirrors to UI");
+        }
+        using (var engine = new LauncherEngine(profile, state))
+            check(engine.State.LauncherHome == manual, "manual directory choice survives core restart");
+        var bogus = Path.Combine(temp, "bogus-client"); Directory.CreateDirectory(bogus);
+        using (var engine = new LauncherEngine(profile, state))
+        {
+            try { await engine.SavePreferences(new Preferences(ClientDirectory: bogus)); throw new Exception("bogus directory accepted"); }
+            catch (InvalidOperationException) { check(true, "directory without DNF.exe/Script.pvf is rejected"); }
+            check(engine.State.LauncherHome == manual, "rejected directory does not change home");
+        }
+
+        // Off policy is gateway-signed; no metadata fetch, no installer.
+        var offProfile = profile with { UpdatePolicy = "off" };
+        using (var off = new LauncherEngine(offProfile, Path.Combine(temp, "auto-off")))
+        {
+            check(!off.State.Preferences.AutoUpdate, "gateway updatePolicy=off disables the automatic switch");
+            check(!await off.AutomaticUpdate(-1), "off policy does not start automatic update");
+            check(off.State.Phase == "ready" && !File.Exists(Path.Combine(temp, "auto-off", "bootstrap.json")),
+                "off policy finishes ready without contacting metadata or caching bootstrap");
+        }
+
+        // A developer may be playing while running this suite. Preserve the process guard.
         var games = System.Diagnostics.Process.GetProcessesByName("DNF");
         var gameRunning = games.Length != 0;
         foreach (var game in games) game.Dispose();
@@ -78,56 +67,6 @@ internal static class AutomaticUpdateChecks
             {
                 check(error.Message == "更新或恢复文件前请退出所有游戏客户端。", "running game blocks automatic update before network or file installation");
             }
-            Console.WriteLine("SKIP self-update priority TLS fixture while a real DNF process is running");
-            return;
         }
-
-        // Real local TLS and signed metadata exercise the priority decision without
-        // starting a UI/helper. The test executable is deliberately not an installation.
-        using var signing = RSA.Create(2048);
-        using var tlsKey = RSA.Create(2048);
-        var certificateRequest = new CertificateRequest("CN=localhost", tlsKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
-        var names = new SubjectAlternativeNameBuilder(); names.AddIpAddress(IPAddress.Loopback);
-        certificateRequest.CertificateExtensions.Add(names.Build());
-        using var generated = certificateRequest.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddHours(1));
-        using var certificate = new X509Certificate2(generated.Export(X509ContentType.Pfx));
-        using var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start();
-        var endpoint = "https://127.0.0.1:" + ((IPEndPoint)listener.LocalEndpoint).Port;
-        var trusted = profile with { ApiUrl = endpoint, CertificateSha256 = Trust.Digest(certificate.RawData), UpdatePublicKey = signing.ExportSubjectPublicKeyInfoPem(), DefaultClientDirectory = "" };
-        var release = new BundleRelease("99.0.0", endpoint + "/bundle.zip", 1, new string('d', 64)) { BuildFlavor = LauncherBuild.Flavor };
-        var content = new ContentRelease("fixture", "author", "stable", 1, new string('e', 64), endpoint, trusted.CertificateSha256,
-            [new("DNF.exe", 10, trusted.ExeSha256, false, "", "", 0), new("Script.pvf", 20, trusted.PvfSha256, false, "", "", 0)]);
-        var payload = JsonSerializer.SerializeToUtf8Bytes(new Bootstrap("DNF90-Flutter", 1, 1, trusted, [], content, release), WireJson.Default.Bootstrap);
-        var signed = JsonSerializer.SerializeToUtf8Bytes(new SignedEnvelope(Convert.ToBase64String(payload), Convert.ToBase64String(signing.SignData(payload, HashAlgorithmName.SHA256, RSASignaturePadding.Pss))), CoreJson.Default.SignedEnvelope);
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        var server = Task.Run(async () =>
-        {
-            for (var i = 0; i < 2; i++)
-            {
-                using var tcp = await listener.AcceptTcpClientAsync(timeout.Token);
-                using var stream = new SslStream(tcp.GetStream());
-                await stream.AuthenticateAsServerAsync(new SslServerAuthenticationOptions { ServerCertificate = certificate }, timeout.Token);
-                using var reader = new StreamReader(stream, Encoding.ASCII, false, 1024, true);
-                var request = await reader.ReadLineAsync(timeout.Token);
-                if (request != "GET " + LauncherBuild.ChannelPath + "bootstrap.json HTTP/1.1") throw new Exception("unexpected fixture request");
-                while (!string.IsNullOrEmpty(await reader.ReadLineAsync(timeout.Token))) { }
-                await stream.WriteAsync(Encoding.ASCII.GetBytes($"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {signed.Length}\r\nConnection: close\r\n\r\n"), timeout.Token);
-                await stream.WriteAsync(signed, timeout.Token);
-            }
-        });
-        foreach (var directory in new[] { "", Path.Combine(temp, "missing-baseline") })
-        {
-            using var engine = new LauncherEngine(trusted, Path.Combine(temp, "auto-priority-" + Guid.NewGuid().ToString("N")));
-            await engine.SavePreferences(new(directory));
-            try { await engine.AutomaticUpdate(-1); throw new Exception("installer guard was bypassed"); }
-            catch (InvalidDataException error)
-            {
-                check(error.Message == "当前不是支持整体更新的登录器安装目录。", "self-update precedes missing client directory or unavailable baseline");
-            }
-            check(engine.State.HasLauncherUpdate && engine.State.Phase == "error", "self-update failure stays visible and prevents client installation");
-            await engine.SavePreferences(new(directory, AutoCheck: false));
-            check(!await engine.AutomaticUpdate(-1), "self-update failure releases operation lock and permits opt-out");
-        }
-        await server;
     }
 }

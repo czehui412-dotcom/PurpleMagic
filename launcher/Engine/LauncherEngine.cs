@@ -13,19 +13,19 @@ namespace Dnf90.Launcher;
 
 public sealed class LauncherEngine : IDisposable
 {
-    public const string VersionText = "1.0.27";
+    public const string VersionText = "1.0.29";
     public const string ContentCapabilitiesHeader = "X-DNF90-Content-Capabilities";
     public const string ContentCapabilities = "native-plugins-v1";
     private readonly PlayerProfile root;
     private readonly string stateRoot;
+    private string home;
     private readonly string? previousUpdateFailure;
     private readonly BundleOutcome? previousUpdateOutcome;
     private readonly SemaphoreSlim operation = new(1, 1);
     private CancellationTokenSource? download;
     private Bootstrap? bootstrap;
     private byte[]? envelope;
-    private Preferences preferences = new();
-    private ContentFile[] plan = [];
+    private UpdateEngine.Change[] changes = [];
     private string clientVersion = "";
     private readonly List<(string Account, Process Process)> games = [];
 #if ANTICHEAT
@@ -37,79 +37,80 @@ public sealed class LauncherEngine : IDisposable
     private readonly DiagnosticService diagnostics;
     private readonly LocalStateStore localState;
     public event Action<State>? Changed;
-    private State state = new("ready", "正在读取本机设置…", 0, 0, 0, false, false, false, "本服批准源", "", new(), []);
+    private State state = new("ready", "正在读取本机状态…", 0, 0, 0, false, false, false, "本服批准源", "", new(), []);
     public State State { get => state with { Diagnostics = diagnostics?.Status }; private set => state = value; }
     private PlayerProfile Profile => bootstrap?.Profile ?? root;
+
     public LauncherEngine(PlayerProfile trusted, string dataDirectory)
     {
         root = trusted; stateRoot = dataDirectory; SafeFiles.NoLinks(stateRoot); Directory.CreateDirectory(stateRoot);
         root.AntiCheat?.Validate();
-#if ANTICHEAT
-        LegacyPreferences.Import(stateRoot);
-#endif
         localState = new LocalStateStore(stateRoot);
         localState.Load();
-        var file = Path.Combine(stateRoot, "preferences.json");
-        if (File.Exists(file)) preferences = JsonSerializer.Deserialize(File.ReadAllBytes(file), WireJson.Default.Preferences) ?? new();
-        if (preferences.Diagnostics is { Enabled: true, HasConsent: false } legacy) {
-            preferences = preferences with { Diagnostics = legacy with { Enabled = false } };
-            SafeFiles.Atomic(file, JsonSerializer.SerializeToUtf8Bytes(preferences, WireJson.Default.Preferences));
-        }
-        // identity.json is authoritative for account + consent. Project into the
-        // legacy Preferences view so the UI and existing callers keep working
-        // during the transition; preferences.json stays as the UI view store.
-        if (localState.Identity.Consent is { } identityConsent)
-            preferences = preferences with
-            {
-                Account = localState.Identity.RememberAccount ? localState.Identity.Account : "",
-                RememberAccount = localState.Identity.RememberAccount,
-                AntiCheatConsentVersion = identityConsent.AntiCheat,
-                Diagnostics = (preferences.Diagnostics ?? new()) with
-                {
-                    ConsentVersion = identityConsent.Diagnostics != 0 ? DiagnosticOptions.CurrentConsent : 0,
-                    ProblemType = string.IsNullOrEmpty(identityConsent.DiagnosticsProblemType) ? "auto" : identityConsent.DiagnosticsProblemType
-                }
-            };
-        else if (File.Exists(file) && (preferences.Account.Length > 0 || preferences.AntiCheatConsentVersion > 0))
-        {
-            // First run after upgrade: seed identity from legacy preferences.
-            localState.SetAccount(preferences.Account, preferences.RememberAccount);
-            localState.SetConsent(preferences.AntiCheatConsentVersion, preferences.Diagnostics?.HasConsent == true ? 1 : 0, preferences.Diagnostics?.ProblemType ?? "auto");
-        }
-        var detected = ClientDirectoryDiscovery.Find(preferences.ClientDirectory, root.DefaultClientDirectory,
-            AppContext.BaseDirectory, Environment.GetEnvironmentVariable(ClientDirectoryDiscovery.LaunchDirectoryVariable), Environment.CurrentDirectory);
-        var discovered = detected != "" && detected != preferences.ClientDirectory;
-        if (discovered)
-        {
-            preferences = preferences with { ClientDirectory = detected };
-            SafeFiles.Atomic(file, JsonSerializer.SerializeToUtf8Bytes(preferences, WireJson.Default.Preferences));
-        }
-        var cached = Path.Combine(stateRoot, "bootstrap.json");
-        if (File.Exists(cached)) { envelope = File.ReadAllBytes(cached); bootstrap = Trust.Verify(envelope, root); }
-        RefreshClientVersion();
+        home = ResolveLauncherHome(localState.Identity.ClientDirectory);
         var install = Path.GetDirectoryName(Path.GetFullPath(AppContext.BaseDirectory).TrimEnd(Path.DirectorySeparatorChar))!;
         previousUpdateFailure = BundleInstaller.PreviousFailure(install);
         previousUpdateOutcome = BundleInstaller.ReadOutcome(install);
         diagnostics = new(stateRoot);
         diagnostics.Changed += () => Changed?.Invoke(State);
-        diagnostics.Configure(preferences.Diagnostics ?? new(), preferences.ClientDirectory, Profile.PvfSha256, bootstrap?.Sequence ?? 0, Profile, bootstrap?.Content?.Version, bootstrap?.Content?.SourceId);
         RecycleStalePortablePayloads();
-        Emit("ready", previousUpdateFailure ?? (discovered ? "已自动识别客户端目录。" : preferences.ClientDirectory == "" ? "请选择客户端目录，检查更新后登录。" : "客户端目录已就绪。"));
+        RefreshClientVersion();
+        Emit("ready", previousUpdateFailure ?? "客户端已就绪。");
     }
+
+    // A user-picked directory (persisted in identity.json) overrides the
+    // auto-detected launch directory. Absent/invalid manual choice falls back
+    // to the entry EXE directory, which is the normal case: the launcher lives
+    // next to DNF.exe. See 登录器架构重构设计.md §5.1.
+    private static string ResolveLauncherHome(string manual)
+    {
+        if (!string.IsNullOrWhiteSpace(manual) && Path.IsPathFullyQualified(manual) && Directory.Exists(manual) &&
+            File.Exists(Path.Combine(manual, "DNF.exe")) && File.Exists(Path.Combine(manual, "Script.pvf")))
+        { SafeFiles.NoLinks(manual); return Path.GetFullPath(manual); }
+        var entry = Environment.GetEnvironmentVariable("DNF90_LAUNCH_DIRECTORY");
+        if (!string.IsNullOrWhiteSpace(entry) && Path.IsPathFullyQualified(entry) && Directory.Exists(entry))
+        { SafeFiles.NoLinks(entry); return Path.GetFullPath(entry); }
+        var install = Path.GetDirectoryName(Path.GetFullPath(AppContext.BaseDirectory).TrimEnd(Path.DirectorySeparatorChar))!;
+        for (var dir = install; dir is not null; dir = Path.GetDirectoryName(dir))
+            if (File.Exists(Path.Combine(dir, "DNF.exe")) && File.Exists(Path.Combine(dir, "Script.pvf")))
+            { SafeFiles.NoLinks(dir); return dir; }
+        return install;
+    }
+
     private void Emit(string phase, string message, long current = 0, long total = 0)
     {
         var busy = phase is "checking" or "downloading" or "installing" or "logging-in" or "resetting";
+        var policy = Profile;
+        var view = new Preferences(
+            localState.Identity.RememberAccount ? localState.Identity.Account : "",
+            localState.Identity.RememberAccount,
+            policy.UpdatePolicy != "off",
+            policy.ReducedEffects,
+            new DiagnosticOptions
+            {
+                Enabled = policy.DiagnosticsPolicy != "off",
+                ConsentVersion = localState.Identity.Consent?.Diagnostics is > 0 ? DiagnosticOptions.CurrentConsent : 0,
+                ProblemType = string.IsNullOrEmpty(localState.Identity.Consent?.DiagnosticsProblemType) ? "auto" : localState.Identity.Consent!.DiagnosticsProblemType
+            },
+            localState.Identity.Consent?.AntiCheat ?? 0,
+            home);
         State = new(phase, message, total == 0 ? 0 : Math.Clamp((double)current / total, 0, 1), current, total,
-            !busy && phase != "paused" && plan.Length == 0 && preferences.ClientDirectory != "" && SupportsContent(Profile), plan.Length != 0,
-            bootstrap?.Launcher is { } b && b.BuildFlavor == LauncherBuild.Flavor && System.Version.Parse(b.Version) > System.Version.Parse(VersionText),
-            bootstrap?.Content?.SourceId ?? "本服批准源", bootstrap?.Content?.Version ?? "", preferences, bootstrap?.News ?? []) { ClientVersion = clientVersion, QQBindingEnabled = root.EnableQQBinding, RequireQQBinding = Profile.RequireQQBinding, AntiCheatEnabled = LauncherBuild.AntiCheat && Profile.AntiCheat is { Enabled: true } };
+            !busy && phase != "paused" && changes.Length == 0, changes.Length != 0,
+            bootstrap?.Launcher is { } b && b.BuildFlavor == LauncherBuild.Flavor && Version.Parse(b.Version) > Version.Parse(VersionText),
+            bootstrap?.Game.SourceId ?? "本服批准源", bootstrap?.Game.Version ?? "", view, bootstrap?.News ?? [])
+        {
+            ClientVersion = clientVersion,
+            LauncherHome = home,
+            QQBindingEnabled = root.EnableQQBinding,
+            RequireQQBinding = Profile.RequireQQBinding,
+            AntiCheatEnabled = LauncherBuild.AntiCheat && Profile.AntiCheat is { Enabled: true }
+        };
         Changed?.Invoke(State);
     }
-    private void RefreshClientVersion() => clientVersion = InstalledClientVersion.Read(preferences.ClientDirectory, root, bootstrap);
+    private void RefreshClientVersion() => clientVersion = InstalledClientVersion.Read(home, bootstrap);
     public void Pause() => download?.Cancel();
     internal static bool SupportsContent(PlayerProfile profile) =>
-        (string.IsNullOrEmpty(profile.MinimumLauncherVersion) ||
-         System.Version.Parse(VersionText) >= System.Version.Parse(profile.MinimumLauncherVersion)) &&
+        (string.IsNullOrEmpty(profile.MinimumLauncherVersion) || Version.Parse(VersionText) >= Version.Parse(profile.MinimumLauncherVersion)) &&
         NativeChannelHistory.SupportsProfile(profile);
     internal static void RequireContentSupport(PlayerProfile profile)
     {
@@ -125,6 +126,12 @@ public sealed class LauncherEngine : IDisposable
         if (job?.Work != work || job.Phase != "candidate-installed") throw new InvalidDataException("就绪回执与更新事务不匹配。");
         SafeFiles.Atomic(full, "ready"u8.ToArray());
     }
+
+    private UpdateEngine NewEngine() => new(home, stateRoot, Profile, diagnostics,
+        (phase, message, current, total) => Emit(phase, message, current, total),
+        new HttpClient { Timeout = Timeout.InfiniteTimeSpan },
+        new LauncherBundleDownloader(Profile));
+
     public async Task<bool> UpdateLauncher(int uiPid)
     {
         if (!await operation.WaitAsync(0)) throw new InvalidOperationException("已有操作正在进行。");
@@ -138,18 +145,18 @@ public sealed class LauncherEngine : IDisposable
         RequireNoGames();
         var release = bootstrap?.Launcher ?? throw new InvalidOperationException("尚未发布登录器更新。");
         LauncherBuild.RequireFlavor(release.BuildFlavor);
-        if (System.Version.Parse(release.Version) <= System.Version.Parse(VersionText)) throw new InvalidOperationException("当前登录器已是最新版本。");
+        if (Version.Parse(release.Version) <= Version.Parse(VersionText)) throw new InvalidOperationException("当前登录器已是最新版本。");
         var app = Path.GetFullPath(AppContext.BaseDirectory).TrimEnd(Path.DirectorySeparatorChar);
         var install = Path.GetDirectoryName(app)!; BundleInstaller.ValidateRoot(install);
         if (Path.GetFileName(app) != "app") throw new InvalidDataException("请从完整安装目录启动登录器。");
         using var ui = Process.GetProcessById(uiPid);
         if (!Path.GetFullPath(ui.MainModule!.FileName).Equals(Path.Combine(app, "DNF90.exe"), StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("登录器父进程不匹配。");
-        var work = Path.Combine(install, ".updates", Guid.NewGuid().ToString("N")); SafeFiles.NoLinks(work); Directory.CreateDirectory(work);
-        var package = Path.Combine(work, "bundle.zip"); using var api = new PlayerApi(root); api.Http.Timeout = Timeout.InfiniteTimeSpan;
+        var work = Path.Combine(stateRoot, "tmp", "bundle", Guid.NewGuid().ToString("N")); SafeFiles.NoLinks(work); Directory.CreateDirectory(work);
+        var package = Path.Combine(work, "bundle.zip");
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(30)); download = timeout;
         Emit("downloading", "正在下载登录器完整更新包…", 0, release.Size);
         using var delivery = new LauncherBundleDownloader(root);
-        var cachedPackage = await delivery.Download(release, Path.Combine(stateRoot, "bundle-downloads"), count => Emit("downloading", "正在下载登录器完整更新包…", count, release.Size), timeout.Token);
+        var cachedPackage = await delivery.Download(release, Path.Combine(stateRoot, "tmp", "downloads"), count => Emit("downloading", "正在下载登录器完整更新包…", count, release.Size), timeout.Token);
         File.Copy(cachedPackage, package, false);
         download = null;
         RequireNoGames();
@@ -163,91 +170,67 @@ public sealed class LauncherEngine : IDisposable
         Emit("installing", "登录器更新已准备完成，正在重启…");
         return true;
     }
+
+    // Unified automatic update (§7.2). Fetch signed state → Diff → guard → run.
     public async Task<bool> AutomaticUpdate(int uiPid)
     {
         if (!await operation.WaitAsync(0)) throw new InvalidOperationException("已有操作正在进行。");
         try
         {
-            // Keep the existing AutoCheck preference so an explicit opt-out survives upgrades.
-            if (!preferences.AutoCheck) return false;
+            if (Profile.UpdatePolicy == "off") { Emit("ready", "本服已关闭自动更新。"); return false; }
             RequireNoGames();
             await RefreshMetadata();
             if (State.HasLauncherUpdate)
             {
-                // A failed replacement must not cause an automatic restart/rollback loop.
                 if (BundleInstaller.SuppressAutomaticRetry(previousUpdateOutcome, bootstrap!.Launcher!.Version)) { Emit("ready", previousUpdateFailure!); return false; }
                 return await UpdateLauncherCore(uiPid);
             }
-            // Whole-archive channel: the signed Game strategy (format=2) or the
-            // legacy Archive field (format=1) decides; a mismatch in DNF.exe/PVF
-            // is fixed silently from the signed direct links, then restart.
-            var strategy = ResolveGameStrategy();
-            var archive = strategy == "archive" ? bootstrap?.Archive : null;
-            if (archive is not null && preferences.ClientDirectory != "" &&
-                (!string.IsNullOrEmpty(archive.PrimaryUrl) || !string.IsNullOrEmpty(archive.FallbackUrl)))
-            {
-                if (ArchiveNeedsUpdate(archive))
-                {
-                    // Repeated-failure guard: stop auto-retry after 3 failures
-                    // on the same package; a manual "check/retry" clears it.
-                    if (localState.IsThrottled(archive.Sha256))
-                    {
-                        Emit("ready", "游戏资源更新多次失败，已暂停自动重试；请点「检查更新」手动重试或联系服主。");
-                        return false;
-                    }
-                    Emit("downloading", "正在下载游戏资源更新包…", 0, archive.Size);
-                    using var client = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
-                    var live = new GameArchiveInstaller(client, diagnostics, (msg) => Emit("installing", msg));
-                    using var cancel = new CancellationTokenSource(TimeSpan.FromMinutes(30)); download = cancel;
-                    bool ok;
-                    try
-                    {
-                        ok = await live.Install(preferences.ClientDirectory, archive,
-                            new Progress<double>(p => Emit("downloading", "正在下载游戏资源更新包…", (long)(p * archive.Size), archive.Size)), cancel.Token);
-                    }
-                    finally { download = null; }
-                    if (ok) { localState.ResetFailures(); clientVersion = ""; return true; }
-                    localState.RecordFailure(archive.Sha256);
-                    return false;
-                }
-                // Archive channel owns verification; skip the per-file blob channel.
-                plan = [];
-                return false;
-            }
-            await PlanContent();
-            await InstallContent();
+            await RefreshChanges();
+            if (changes.Length == 0) { Emit("ready", "客户端资源已是本服批准版本。"); return false; }
+            var target = UpdateEngine.TargetId(bootstrap!.Game);
+            if (localState.IsThrottled(target))
+            { Emit("ready", "游戏资源更新多次失败，已暂停自动重试；请手动重试或联系服主。"); return false; }
+            var plan = new UpdateEngine.Plan(changes.Select(c => bootstrap.Game.Files.First(f => f.Path == c.Path)).ToArray(), bootstrap.Game.Delivery.Strategy, target);
+            using var cancel = new CancellationTokenSource(TimeSpan.FromMinutes(30)); download = cancel;
+            bool ok;
+            try { ok = await NewEngine().Run(plan, bootstrap.Game, cancel.Token); }
+            finally { download = null; }
+            if (ok) { localState.ResetFailures(); clientVersion = ""; await RefreshChanges(); Emit("ready", "游戏资源更新完成。"); }
+            else { localState.RecordFailure(target); Emit("error", "游戏资源更新未完成，可手动重试。"); }
             return false;
         }
-        catch (OperationCanceledException)
-        {
-            Emit(State.HasUpdate && !State.HasLauncherUpdate ? "paused" : "ready", "自动更新已暂停，可手动重试。", State.Downloaded, State.Total);
-            return false;
-        }
-        catch { Emit("error", "自动更新未完成，可手动重试。", State.Downloaded, State.Total); throw; }
+        catch (OperationCanceledException) { Emit("ready", "自动更新已暂停，可手动重试。"); return false; }
+        catch (Exception error) { diagnostics.Failure("auto_update", error); Emit("error", "自动更新未完成：" + error.Message); throw; }
         finally { download = null; operation.Release(); }
     }
+
     public async Task SavePreferences(Preferences value)
     {
         if (!await operation.WaitAsync(0)) throw new InvalidOperationException("当前操作完成后再修改设置。");
         try
         {
-            if (value.Diagnostics?.ProblemType is not (null or "auto" or "quests" or "interaction" or "connection" or "performance")) throw new InvalidDataException("诊断问题类型无效。");
-            if (value.Diagnostics is { Enabled: true, HasConsent: false }) throw new InvalidOperationException("请先阅读并同意异常栈与游戏操作采集说明。");
-            if (value.Account.Length > 64 || value.ClientDirectory.Length > 1000) throw new InvalidDataException("设置内容过长。");
-            var directoryChanged = value.ClientDirectory != preferences.ClientDirectory;
-            preferences = value with { Account = value.RememberAccount ? value.Account : "" };
-            SafeFiles.Atomic(Path.Combine(stateRoot, "preferences.json"), JsonSerializer.SerializeToUtf8Bytes(preferences, WireJson.Default.Preferences));
+            // Only identity + an explicit client-directory choice are persisted;
+            // auto-update/effects/diagnostics enabled are gateway policy (§5.4).
             localState.SetAccount(value.Account, value.RememberAccount);
             localState.SetConsent(value.AntiCheatConsentVersion, value.Diagnostics?.HasConsent == true ? 1 : 0, value.Diagnostics?.ProblemType ?? "auto");
-            diagnostics.Configure(preferences.Diagnostics ?? new(), preferences.ClientDirectory, Profile.PvfSha256, bootstrap?.Sequence ?? 0, Profile, bootstrap?.Content?.Version, bootstrap?.Content?.SourceId);
-            if (directoryChanged) { plan = []; await Task.Run(RefreshClientVersion); }
+            var requested = value.ClientDirectory?.Trim() ?? "";
+            if (requested.Length != 0)
+            {
+                if (!Path.IsPathFullyQualified(requested) || !Directory.Exists(requested) ||
+                    !File.Exists(Path.Combine(requested, "DNF.exe")) || !File.Exists(Path.Combine(requested, "Script.pvf")))
+                    throw new InvalidOperationException("所选目录不包含 DNF.exe 和 Script.pvf。");
+                SafeFiles.NoLinks(requested);
+                var next = Path.GetFullPath(requested);
+                localState.SetClientDirectory(next);
+                if (!string.Equals(next, home, StringComparison.OrdinalIgnoreCase))
+                { home = next; RefreshClientVersion(); }
+            }
             Emit("ready", "设置已保存。");
         }
         finally { operation.Release(); }
     }
-    public Task<ConfigurationReset> ResetGameConfiguration(bool confirmed) =>
-        ResetGameConfiguration(confirmed, () => GameConfiguration.Reset(confirmed));
 
+    public Task<ConfigurationReset> ResetGameConfiguration(bool confirmed) => ResetGameConfiguration(confirmed, () => GameConfiguration.Reset(confirmed));
     internal async Task<ConfigurationReset> ResetGameConfiguration(bool confirmed, Func<ConfigurationReset> reset)
     {
         if (!confirmed) throw new InvalidOperationException("请先确认重置本机游戏配置。");
@@ -263,56 +246,26 @@ public sealed class LauncherEngine : IDisposable
         finally { operation.Release(); }
     }
 
-    private bool ArchiveNeedsUpdate(GameArchive archive) =>
-        preferences.ClientDirectory != "" && ArchiveNeedsUpdate(preferences.ClientDirectory, archive);
-
-    internal static bool ArchiveNeedsUpdate(string directory, GameArchive archive)
+    private async Task RefreshChanges()
     {
-        foreach (var (name, expected) in new[] { ("DNF.exe", archive.Files.FirstOrDefault(f => f.Path.Equals("DNF.exe", StringComparison.OrdinalIgnoreCase))?.Sha256),
-                                                 ("Script.pvf", archive.Files.FirstOrDefault(f => f.Path.Equals("Script.pvf", StringComparison.OrdinalIgnoreCase))?.Sha256) })
-        {
-            if (expected is null) continue;
-            var path = SafeFiles.Target(directory, name);
-            if (!File.Exists(path)) return true;
-            // Trust.Digest already computes SHA-256. A second HashData here
-            // made every up-to-date client look stale and re-download forever.
-            var localHash = Trust.Digest(File.ReadAllBytes(path));
-            if (!string.Equals(localHash, expected, StringComparison.OrdinalIgnoreCase)) return true;
-        }
-        return false;
-    }
-
-    // P3: a single explicit decision point for the game-resource channel.
-    // format=2 bootstraps drive the strategy from the signed Game artifact;
-    // format=1 falls back to the legacy Archive/Content fields. This replaces
-    // the old implicit "archive present => skip blob" coupling: the strategy is
-    // chosen once, here, from the authoritative signed contract.
-    private string ResolveGameStrategy()
-    {
-        if (bootstrap?.Game?.Delivery is { } d && d.Strategy is "archive" or "blob")
-            return d.Strategy;
-        if (bootstrap?.Archive is not null) return "archive";
-        if (bootstrap?.Content is not null) return "blob";
-        return "none";
+        if (bootstrap is null) { changes = []; return; }
+        changes = await NewEngine().Diff(bootstrap.Game, CancellationToken.None);
     }
 
     public async Task Check()
     {
         if (!await operation.WaitAsync(0)) throw new InvalidOperationException("已有操作正在进行。");
-        try { await CheckCore(); }
+        try
+        {
+            localState.ResetFailures();
+            await RefreshMetadata();
+            await RefreshChanges();
+            Emit("ready", changes.Length == 0 ? "客户端资源与本服批准版本一致。" : $"发现 {changes.Length} 个待更新文件，请点击安装更新。");
+        }
         catch { Emit("error", "检查未完成，可重试或查看错误提示。"); throw; }
         finally { operation.Release(); }
     }
-    private async Task CheckCore()
-    {
-        // An explicit check is a manual retry: clear the auto-retry throttle.
-        localState.ResetFailures();
-        await RefreshMetadata();
-        await PlanContent();
-    }
-    // 绿色模式便携入口每次换版会在 portable\anticheat\<payload sha>\ 解包一份新目录，
-    // 旧目录与 .prepare.lock 不会自行回收。启动时只清理非当前 sha 的目录和残留锁，
-    // 信任锚 state-anticheat\bootstrap.json 与当前解包目录始终保留。
+
     private void RecycleStalePortablePayloads()
     {
         try
@@ -333,14 +286,13 @@ public sealed class LauncherEngine : IDisposable
                 try { Directory.Delete(dir, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
             }
             foreach (var file in Directory.EnumerateFiles(cacheRoot, ".*.prepare.lock"))
-            {
                 try { File.Delete(file); } catch (IOException) { } catch (UnauthorizedAccessException) { }
-            }
         }
         catch (Exception error) { diagnostics.Failure("portable_recycle_error", error); }
     }
     private static bool IsSha256Name(string name) =>
         name.Length == 64 && name.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');
+
     private async Task RefreshMetadata()
     {
         var metadataClock = Stopwatch.StartNew();
@@ -355,82 +307,44 @@ public sealed class LauncherEngine : IDisposable
         using var response = await api.Http.SendAsync(metadataRequest, HttpCompletionOption.ResponseHeadersRead, metadataTimeout.Token);
         var serverDate = response.Headers.Date?.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
         diagnostics.RecordHttpTrace(new(traceId, "bootstrap_metadata", (int)response.StatusCode, Math.Round(metadataClock.Elapsed.TotalMilliseconds, 3), DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"), Stopwatch.GetTimestamp(), serverDate));
-        if (response.StatusCode == System.Net.HttpStatusCode.NotFound && bootstrap is null)
-        {
-            plan = []; Emit("ready", "后台更新服务尚未部署；登录使用现有本服兼容配置。"); return;
-        }
         response.EnsureSuccessStatusCode();
-        await using var input = await response.Content.ReadAsStreamAsync(metadataTimeout.Token); using var output = new MemoryStream(); var buffer = new byte[8192]; int read;
+        await using var input = await response.Content.ReadAsStreamAsync(metadataTimeout.Token);
+        using var output = new MemoryStream(); var buffer = new byte[8192]; int read;
         while ((read = await input.ReadAsync(buffer, metadataTimeout.Token)) != 0) { if (output.Length + read > Trust.MaxMetadata) throw new InvalidDataException("发布数据超过限制。"); output.Write(buffer, 0, read); }
         var raw = output.ToArray(); var next = Trust.Verify(raw, root);
         if (bootstrap is not null && envelope is not null) Trust.CheckSequence(next, raw, bootstrap, envelope);
-        // Anchor-backed anti-rollback (only once anchored, so legacy/first-run
-        // states are not blocked). The anchor is advanced only after a full
-        // successful cycle, keeping half-updated states from being pinned.
-        if (localState.Anchor.Sequence > 0 && !localState.AntiRollbackAccept(next))
-            throw new InvalidDataException("发布版本出现回滚，已拒绝。");
-        SafeFiles.Atomic(Path.Combine(stateRoot, "bootstrap.json"), raw); bootstrap = next; envelope = raw;
+        if (localState.Anchor.Sequence > 0 && !localState.AntiRollbackAccept(next)) throw new InvalidDataException("发布版本出现回滚，已拒绝。");
+        bootstrap = next; envelope = raw;
         localState.AdvanceAnchor(next);
-        diagnostics.Configure(preferences.Diagnostics ?? new(), preferences.ClientDirectory, Profile.PvfSha256, bootstrap?.Sequence ?? 0, Profile, bootstrap?.Content?.Version, bootstrap?.Content?.SourceId);
-        diagnostics.Event("metadata_verified", metadataClock.Elapsed.TotalMilliseconds, bootstrap?.Sequence);
+        diagnostics.Configure(State.Preferences.Diagnostics ?? new(), home, Profile.PvfSha256, bootstrap.Sequence, Profile, bootstrap.Game.Version, bootstrap.Game.SourceId);
+        diagnostics.Event("metadata_verified", metadataClock.Elapsed.TotalMilliseconds, bootstrap.Sequence);
         Emit("checking", "发布信息已验证。");
     }
-    private async Task PlanContent()
-    {
-        if (bootstrap is null) return;
-        if (!SupportsContent(Profile)) { plan = []; Emit("ready", "请先更新登录器，再安装资源或登录游戏。"); return; }
-        if (preferences.ClientDirectory == "") { Emit("ready", "发布信息已更新，请先选择客户端目录。"); return; }
-        RequireNoGames();
-        using var transaction = new FileTransaction(preferences.ClientDirectory); transaction.Recover();
-        await Task.Run(RefreshClientVersion);
-        if (bootstrap.Content is { } content)
-        {
-            Emit("checking", "正在校验客户端资源…"); plan = await ContentUpdater.Plan(preferences.ClientDirectory, content, CancellationToken.None);
-            Emit("ready", plan.Length == 0 ? "客户端资源与本服批准版本一致。" : $"发现 {plan.Length} 个待更新文件，请点击安装更新。");
-        }
-        else { plan = []; await GameContract.VerifyClient(preferences.ClientDirectory, Profile); Emit("ready", "客户端兼容校验通过；后台尚未发布资源更新。"); }
-    }
+
     public async Task UpdateContent()
     {
         if (!await operation.WaitAsync(0)) throw new InvalidOperationException("已有操作正在进行。");
         try
         {
-            RequireNoGames(); await CheckCore(); await InstallContent();
+            RequireNoGames(); await RefreshMetadata(); await RefreshChanges();
+            if (changes.Length == 0) { Emit("ready", "客户端资源已与本服批准版本一致。"); return; }
+            var target = UpdateEngine.TargetId(bootstrap!.Game);
+            if (localState.IsThrottled(target)) { Emit("ready", "游戏资源更新多次失败，请手动重试或联系服主。"); return; }
+            var plan = new UpdateEngine.Plan(changes.Select(c => bootstrap.Game.Files.First(f => f.Path == c.Path)).ToArray(), bootstrap.Game.Delivery.Strategy, target);
+            using var cancel = new CancellationTokenSource(TimeSpan.FromHours(6)); download = cancel;
+            var ok = await NewEngine().Run(plan, bootstrap.Game, cancel.Token);
+            if (ok) { localState.ResetFailures(); clientVersion = ""; await RefreshChanges(); Emit("ready", "更新完成，客户端资源已通过摘要校验。"); }
+            else localState.RecordFailure(target);
         }
-        catch (OperationCanceledException) { Emit("paused", "下载已暂停，点击继续会保留已下载的断点。", State.Downloaded, State.Total); }
-        catch (Exception error) { diagnostics.Failure("update_error", error); Emit("error", "更新未完成，已保留当前版本与可恢复记录。", State.Downloaded, State.Total); throw; }
+        catch (OperationCanceledException) { Emit("paused", "下载已暂停，点击继续会保留已下载的断点。"); }
+        catch (Exception error) { diagnostics.Failure("update_error", error); Emit("error", "更新未完成，已保留当前版本与可恢复记录。"); throw; }
         finally { download = null; operation.Release(); }
     }
-    private async Task InstallContent()
-    {
-        var updateClock = Stopwatch.StartNew();
-        RequireContentSupport(Profile);
-        if (bootstrap?.Content is not { } content || plan.Length == 0) return;
-        RequireNoGames();
-        using var transaction = new FileTransaction(preferences.ClientDirectory); transaction.Recover();
-        using var client = ContentUpdater.Client(content); using var cancel = new CancellationTokenSource(TimeSpan.FromHours(6)); download = cancel;
-            using var delivery = new LauncherBundleDownloader(root with { ApiUrl = content.Endpoint, CertificateSha256 = content.CertificateSha256 });
-        var total = plan.Sum(ContentUpdater.TransferSize); long finished = 0;
-        for (int i = 0; i < plan.Length; i++)
-        {
-            var file = plan[i]; var lastUpdate = Stopwatch.StartNew();
-            Emit("downloading", "正在下载 " + file.Path, finished, total);
-            await ContentUpdater.PrepareFile(client, content, file, Path.Combine(stateRoot, "downloads"), transaction.Stage(i), bytes =>
-            { if (lastUpdate.ElapsedMilliseconds >= 80) { Emit("downloading", "正在下载 " + file.Path, finished + bytes, total); lastUpdate.Restart(); } }, cancel.Token, delivery);
-            finished += ContentUpdater.TransferSize(file);
-        }
-        cancel.Token.ThrowIfCancellationRequested(); download = null; RequireNoGames();
-        clientVersion = "";
-        Emit("installing", "正在提交更新，保留恢复记录…", total, total);
-        transaction.Commit(plan.Select(f => f.Path).ToArray(), envelope!); plan = [];
-        await Task.Run(RefreshClientVersion);
-        diagnostics.Event("update_complete", updateClock.Elapsed.TotalMilliseconds);
-        Emit("ready", "更新完成，客户端资源已通过双重摘要校验。", total, total);
-    }
+
     public async Task<LoginReply> AccountSecurity(string action, PasswordChange input)
     {
         if (action is not ("binding-code" or "password")) throw new ArgumentException(nameof(action));
-        if (action == "binding-code" && !root.EnableQQBinding) throw new InvalidOperationException("此登录器未启用 QQ 绑定功能。");
+        if (action is "binding-code" && !root.EnableQQBinding) throw new InvalidOperationException("此登录器未启用 QQ 绑定功能。");
         if (!await operation.WaitAsync(0)) throw new InvalidOperationException("已有操作正在进行。");
         try {
             ValidateCredentials(new(input.Account, input.Password));
@@ -439,7 +353,6 @@ public sealed class LauncherEngine : IDisposable
             return await api.Submit(action, input.Account.Trim(), input.Password, Device(), input.NewPassword);
         } finally { operation.Release(); }
     }
-    // CDK 兑换码：独立轻量操作（不影响登录/更新状态机），账号密码由服务端验证。
     public async Task<CdkReply> RedeemCdk(CdkInput input)
     {
         if (!await operation.WaitAsync(0)) throw new InvalidOperationException("已有操作正在进行。");
@@ -485,17 +398,17 @@ public sealed class LauncherEngine : IDisposable
             var stageClock = Stopwatch.StartNew();
             RequireContentSupport(Profile);
             ValidateCredentials(input); Emit("checking", "正在验证客户端与本服版本…");
-            using var clientLock = new FileTransaction(preferences.ClientDirectory);
-            if (File.Exists(Path.Combine(preferences.ClientDirectory, ".dnf90-update", "journal.json"))) RequireNoGames();
+            using var clientLock = new FileTransaction(home);
+            if (File.Exists(Path.Combine(home, ".dnf90-update", "journal.json"))) RequireNoGames();
             clientLock.Recover();
-            if (bootstrap?.Content is { } content)
+            if (bootstrap is { } boot)
             {
-                plan = await ContentUpdater.Plan(preferences.ClientDirectory, content, CancellationToken.None, Path.Combine(stateRoot, "content-check.txt"));
-                if (plan.Length != 0) throw new InvalidOperationException("请先完成客户端资源更新。");
+                var pending = await NewEngine().Diff(boot.Game, CancellationToken.None);
+                if (pending.Length != 0) throw new InvalidOperationException("请先完成客户端资源更新。");
             }
-            await GameContract.VerifyClient(preferences.ClientDirectory, Profile);
+            await GameContract.VerifyClient(home, Profile);
             diagnostics.Event("client_verified", stageClock.Elapsed.TotalMilliseconds); stageClock.Restart();
-            if (NativeGuildCompatibility.Prepare(preferences.ClientDirectory, Profile))
+            if (NativeGuildCompatibility.Prepare(home, Profile))
                 Emit("checking", "公会兼容补丁已应用，原版客户端已备份。");
             games.RemoveAll(g => g.Process.HasExited);
             if (games.Any(g => g.Account.Equals(input.Account.Trim(), StringComparison.OrdinalIgnoreCase))) throw new InvalidOperationException("该账号已经启动，请使用另一个账号。");
@@ -506,7 +419,7 @@ public sealed class LauncherEngine : IDisposable
                     foreach (var finished in protectedGames.Where(g => g.Completed).ToArray()) { finished.Dispose(); protectedGames.Remove(finished); }
                 }
                 Emit("checking", "正在请求管理员授权以启动反作弊保护；退出登录器将结束本次游戏…");
-                guard = await AntiCheatSession.Start(preferences.ClientDirectory, envelope, stateRoot, message => Emit("error", message), guardLifetime.Token);
+                guard = await AntiCheatSession.Start(home, envelope, stateRoot, message => Emit("error", message), guardLifetime.Token);
                 lock (guardLock) {
                     if (guardClosing) throw new InvalidOperationException("登录器已关闭。");
                     protectedGames.Add(guard);
@@ -518,12 +431,12 @@ public sealed class LauncherEngine : IDisposable
             var channels = await ChannelProbe.Check(Profile, m => Emit("checking", m));
             diagnostics.Event("channel_verified", stageClock.Elapsed.TotalMilliseconds, channels.ServerId); stageClock.Restart();
             Emit("logging-in", "正在验证账号…"); using var api = new PlayerApi(Profile, status => diagnostics.Event("account_http_response", number: status), trace => diagnostics.RecordHttpTrace(trace));
-            var correlation = preferences.Diagnostics is { Enabled: true, HasConsent: true } ? Guid.NewGuid().ToString("N") : null;
+            var correlation = State.Preferences.Diagnostics is { Enabled: true, HasConsent: true } ? Guid.NewGuid().ToString("N") : null;
             var reply = await api.Submit("login", input.Account.Trim(), input.Password, Device(), diagnosticCorrelationId: correlation);
             if (correlation is not null) diagnostics.LoginContext(Profile, correlation, reply.Diagnostics);
             diagnostics.Event("account_verified", stageClock.Elapsed.TotalMilliseconds); stageClock.Restart();
             NativeChannelHistory.Prepare(Profile, channels);
-            var executable = Path.Combine(preferences.ClientDirectory, "DNF.exe");
+            var executable = Path.Combine(home, "DNF.exe");
             var running = Process.GetProcessesByName("DNF");
             try
             {
@@ -531,7 +444,7 @@ public sealed class LauncherEngine : IDisposable
                 if (running.Length == 1) NativeClientGate.PrepareSecondClient(running[0], executable, Profile);
             }
             finally { foreach (var process in running) process.Dispose(); }
-            var start = new ProcessStartInfo(executable) { UseShellExecute = false, WorkingDirectory = preferences.ClientDirectory, Arguments = GameContract.Arguments(reply.Token ?? "", Profile.GameHost, Profile.BootstrapPort) };
+            var start = new ProcessStartInfo(executable) { UseShellExecute = false, WorkingDirectory = home, Arguments = GameContract.Arguments(reply.Token ?? "", Profile.GameHost, Profile.BootstrapPort) };
             Process game;
             string handoffMode;
 #if ANTICHEAT
@@ -544,15 +457,13 @@ public sealed class LauncherEngine : IDisposable
             games.Add((input.Account.Trim(), game));
             diagnostics.Track(game, executable, handoffMode);
             diagnostics.Event("process_started", stageClock.Elapsed.TotalMilliseconds);
-            preferences = preferences with { Account = preferences.RememberAccount ? input.Account.Trim() : "" };
-            SafeFiles.Atomic(Path.Combine(stateRoot, "preferences.json"), JsonSerializer.SerializeToUtf8Bytes(preferences, WireJson.Default.Preferences));
-            localState.SetAccount(input.Account, preferences.RememberAccount);
+            localState.SetAccount(input.Account, State.Preferences.RememberAccount);
             Emit("logging-in", "游戏进程已创建，正在等待客户端启动…");
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
             try { await game.WaitForExitAsync(timeout.Token); } catch (OperationCanceledException) when (timeout.IsCancellationRequested) { }
             if (game.HasExited) throw new InvalidOperationException($"客户端提前退出（代码 {game.ExitCode}），请等待约 20 秒后重试。");
 #if ANTICHEAT
-            guard = null; // Ownership remains with the launcher until game/launcher exit.
+            guard = null;
 #endif
             Emit("ready", channels.Message + " 客户端正在运行。");
         }

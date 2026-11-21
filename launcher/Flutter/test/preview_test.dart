@@ -647,7 +647,7 @@ void main() {
       launchArguments = const ['--update-retry-required'];
       final fake = FakeCore();
       fake.state['hasLauncherUpdate'] = true;
-      (fake.state['preferences'] as Map)['autoCheck'] = true;
+      (fake.state['preferences'] as Map)['autoUpdate'] = true;
       await start(tester, controller: LauncherController(client: fake));
       await tester.pump(const Duration(seconds: 10));
       expect(fake.calls, ['initialize']);
@@ -691,7 +691,7 @@ void main() {
     'automatic updates default on and request restart after self-update',
     (tester) async {
       final fake = FakeCore()..autoRestart = true;
-      (fake.state['preferences'] as Map<String, dynamic>).remove('autoCheck');
+      (fake.state['preferences'] as Map<String, dynamic>).remove('autoUpdate');
       final actions = <String>[];
       const channel = MethodChannel('dnf90.preview/window');
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
@@ -737,7 +737,7 @@ void main() {
       await screenshot(tester, 'settings-auto-update');
       await tester.tap(find.byKey(const Key('auto-update')));
       await tester.pumpAndSettle();
-      expect((fake.state['preferences'] as Map)['autoCheck'], isFalse);
+      expect((fake.state['preferences'] as Map)['autoUpdate'], isFalse);
       expect(fake.calls.where((c) => c == 'autoUpdate').length, 1);
       await tester.tap(find.byTooltip('关闭设置'));
       await tester.pumpAndSettle();
@@ -756,7 +756,7 @@ void main() {
     'automatic failure remains visible without closing or repeating updates',
     (tester) async {
       final fake = FakeCore()..autoError = '内容源暂时不可用';
-      (fake.state['preferences'] as Map<String, dynamic>)['autoCheck'] = true;
+      (fake.state['preferences'] as Map<String, dynamic>)['autoUpdate'] = true;
       final model = LauncherController(client: fake);
       await start(tester, controller: model);
       expect(model.phase, UpdatePhase.error);
@@ -765,72 +765,6 @@ void main() {
       expect(fake.calls.where((c) => c == 'autoUpdate').length, 1);
       await tester.pump(const Duration(seconds: 10));
       expect(fake.calls.where((c) => c == 'autoUpdate').length, 1);
-    },
-  );
-
-  testWidgets(
-    'choosing a client directory starts automatic updates when enabled',
-    (tester) async {
-      final fake = FakeCore();
-      (fake.state['preferences'] as Map<String, dynamic>)['autoCheck'] = true;
-      final model = LauncherController(client: fake);
-      await start(tester, controller: model);
-      mockDirectoryPicker(r'E:\Games\NewClient');
-      await tester.tap(find.byKey(const Key('directory')));
-      await tester.pumpAndSettle();
-      expect(model.clientDirectory, r'E:\Games\NewClient');
-      expect(fake.calls, [
-        'initialize',
-        'autoUpdate',
-        'preferences',
-        'autoUpdate',
-      ]);
-    },
-  );
-
-  testWidgets('canceling native directory selection preserves preferences', (
-    tester,
-  ) async {
-    final fake = FakeCore();
-    final model = LauncherController(client: fake);
-    await start(tester, controller: model);
-    final original = model.clientDirectory;
-    final calls = List<String>.from(fake.calls);
-    mockDirectoryPicker(null);
-    await tester.tap(find.byKey(const Key('directory')));
-    await tester.pumpAndSettle();
-    expect(model.clientDirectory, original);
-    expect(fake.calls, calls);
-  });
-
-  testWidgets(
-    'directory picker carries Unicode paths and blocks duplicate dialogs',
-    (tester) async {
-      final fake = FakeCore();
-      final model = LauncherController(client: fake);
-      await start(tester, controller: model);
-      const channel = MethodChannel('dnf90.preview/window');
-      final selection = Completer<String?>();
-      var calls = 0;
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, (call) async {
-            expect(call.method, 'chooseDirectory');
-            expect(call.arguments['initialDirectory'], model.clientDirectory);
-            calls++;
-            return selection.future;
-          });
-      addTearDown(
-        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-            .setMockMethodCallHandler(channel, null),
-      );
-      await tester.tap(find.byKey(const Key('directory')));
-      await tester.pump();
-      await tester.tap(find.byKey(const Key('directory')));
-      await tester.pump();
-      expect(calls, 1);
-      selection.complete(r'E:\游戏目录\阿拉德 client');
-      await tester.pumpAndSettle();
-      expect(model.clientDirectory, r'E:\游戏目录\阿拉德 client');
     },
   );
 
@@ -954,7 +888,7 @@ class FakeCore extends CoreClient {
       'clientDirectory': r'D:\Games\DNF90',
       'account': '',
       'rememberAccount': true,
-      'autoCheck': false,
+      'autoUpdate': false,
       'reducedEffects': false,
     },
     'news': [

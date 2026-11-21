@@ -288,10 +288,11 @@ class LauncherController extends ChangeNotifier {
     news = (state['news'] as List? ?? []).cast<Map<String, dynamic>>();
     final prefs = state['preferences'] as Map<String, dynamic>? ?? {};
     antiCheatConsentVersion = prefs['antiCheatConsentVersion'] as int? ?? 0;
-    clientDirectory = prefs['clientDirectory'] as String? ?? '';
+    // Core's authoritative home: auto-detected launch dir, or a manual override.
+    clientDirectory = state['launcherHome'] as String? ?? '';
     account = prefs['account'] as String? ?? '';
     rememberAccount = prefs['rememberAccount'] != false;
-    autoUpdate = prefs['autoCheck'] != false;
+    autoUpdate = prefs['autoUpdate'] != false;
     reducedEffects = prefs['reducedEffects'] == true;
     final diagnosticPrefs = prefs['diagnostics'] as Map<String, dynamic>? ?? {};
     diagnosticsEnabled = diagnosticPrefs['enabled'] == true;
@@ -379,7 +380,7 @@ class LauncherController extends ChangeNotifier {
       'clientDirectory': directory ?? clientDirectory,
       'account': remembered ?? account,
       'rememberAccount': remember ?? rememberAccount,
-      'autoCheck': check ?? autoUpdate,
+      'autoUpdate': check ?? autoUpdate,
       'reducedEffects': effects ?? reducedEffects,
       'antiCheatConsentVersion': antiCheatConsent ?? antiCheatConsentVersion,
       'diagnostics': {

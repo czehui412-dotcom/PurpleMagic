@@ -36,9 +36,14 @@ def main():
     if policy.get('Enabled') and not args.anticheat:
         raise SystemExit('AntiCheat.Enabled requires --anticheat')
     project = ROOT / "launcher/Flutter"
-    for name in ("background.webp", "announcement.webp"):
-        if not (project / "assets" / name).is_file():
-            raise SystemExit("Missing approved artwork: " + name)
+    # Validate the assets the project actually declares (pubspec.yaml); do not
+    # require artwork that is no longer part of the approved build.
+    import re as _re
+    _spec = (project / "pubspec.yaml").read_text(encoding="utf-8")
+    _assets = _re.findall(r"^\s*-\s*(assets/[^\s]+)\s*$", _spec, _re.M)
+    for _asset in _assets:
+        if not (project / _asset).is_file():
+            raise SystemExit("Missing approved artwork: " + _asset)
     if not (project / "windows/runner/resources/app_icon.ico").is_file():
         raise SystemExit("Missing approved Windows app_icon.ico")
     if not (project / "brand/witch.png").is_file():

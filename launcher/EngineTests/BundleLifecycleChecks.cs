@@ -61,7 +61,10 @@ static class BundleLifecycleChecks
                 }
                 var bytes = File.ReadAllBytes(package);
                 var release = new BundleRelease("0.2.99", "https://accounts.example.test/bundle.zip", bytes.Length, Trust.Digest(bytes));
-                var payload = JsonSerializer.SerializeToUtf8Bytes(new Bootstrap("DNF90-Flutter", 1, 1, trusted, [], null, release), WireJson.Default.Bootstrap);
+                var lifecycleGame = new GameArtifact("v", "src", 1,
+                    [new("DNF.exe", 10, trusted.ExeSha256), new("Script.pvf", 20, trusted.PvfSha256)],
+                    new GameDelivery("blob", Endpoint: trusted.ApiUrl));
+                var payload = JsonSerializer.SerializeToUtf8Bytes(new Bootstrap("DNF90-Flutter", 2, 1, trusted, [], release, lifecycleGame), WireJson.Default.Bootstrap);
                 var envelope = JsonSerializer.SerializeToUtf8Bytes(new SignedEnvelope(Convert.ToBase64String(payload), Convert.ToBase64String(key.SignData(payload, HashAlgorithmName.SHA256, RSASignaturePadding.Pss))), CoreJson.Default.SignedEnvelope);
                 var job = new BundleJob(install, package, Convert.ToBase64String(envelope), -1, 0, -1, 0, work, "downloaded");
                 using var locked = scenario == "locked-directory" ? CreateFile(app, 0x80000000, 3, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero) : null;
