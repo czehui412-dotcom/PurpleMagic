@@ -178,9 +178,11 @@ public sealed class LauncherEngine : IDisposable
                 if (BundleInstaller.SuppressAutomaticRetry(previousUpdateOutcome, bootstrap!.Launcher!.Version)) { Emit("ready", previousUpdateFailure!); return false; }
                 return await UpdateLauncherCore(uiPid);
             }
-            // Whole-archive channel: when enabled, a mismatch in DNF.exe/PVF is
-            // fixed silently from the signed direct links, then the launcher restarts.
-            var archive = bootstrap?.Archive;
+            // Whole-archive channel: the signed Game strategy (format=2) or the
+            // legacy Archive field (format=1) decides; a mismatch in DNF.exe/PVF
+            // is fixed silently from the signed direct links, then restart.
+            var strategy = ResolveGameStrategy();
+            var archive = strategy == "archive" ? bootstrap?.Archive : null;
             if (archive is not null && preferences.ClientDirectory != "" &&
                 (!string.IsNullOrEmpty(archive.PrimaryUrl) || !string.IsNullOrEmpty(archive.FallbackUrl)))
             {
@@ -261,20 +263,39 @@ public sealed class LauncherEngine : IDisposable
         finally { operation.Release(); }
     }
 
-    private bool ArchiveNeedsUpdate(GameArchive archive)
+    private bool ArchiveNeedsUpdate(GameArchive archive) =>
+        preferences.ClientDirectory != "" && ArchiveNeedsUpdate(preferences.ClientDirectory, archive);
+
+    internal static bool ArchiveNeedsUpdate(string directory, GameArchive archive)
     {
-        if (preferences.ClientDirectory == "") return false;
         foreach (var (name, expected) in new[] { ("DNF.exe", archive.Files.FirstOrDefault(f => f.Path.Equals("DNF.exe", StringComparison.OrdinalIgnoreCase))?.Sha256),
                                                  ("Script.pvf", archive.Files.FirstOrDefault(f => f.Path.Equals("Script.pvf", StringComparison.OrdinalIgnoreCase))?.Sha256) })
         {
             if (expected is null) continue;
-            var path = SafeFiles.Target(preferences.ClientDirectory, name);
+            var path = SafeFiles.Target(directory, name);
             if (!File.Exists(path)) return true;
-            using var stream = File.OpenRead(path);
-            if (!string.Equals(Trust.Digest(System.Security.Cryptography.SHA256.HashData(stream)), expected, StringComparison.OrdinalIgnoreCase)) return true;
+            // Trust.Digest already computes SHA-256. A second HashData here
+            // made every up-to-date client look stale and re-download forever.
+            var localHash = Trust.Digest(File.ReadAllBytes(path));
+            if (!string.Equals(localHash, expected, StringComparison.OrdinalIgnoreCase)) return true;
         }
         return false;
     }
+
+    // P3: a single explicit decision point for the game-resource channel.
+    // format=2 bootstraps drive the strategy from the signed Game artifact;
+    // format=1 falls back to the legacy Archive/Content fields. This replaces
+    // the old implicit "archive present => skip blob" coupling: the strategy is
+    // chosen once, here, from the authoritative signed contract.
+    private string ResolveGameStrategy()
+    {
+        if (bootstrap?.Game?.Delivery is { } d && d.Strategy is "archive" or "blob")
+            return d.Strategy;
+        if (bootstrap?.Archive is not null) return "archive";
+        if (bootstrap?.Content is not null) return "blob";
+        return "none";
+    }
+
     public async Task Check()
     {
         if (!await operation.WaitAsync(0)) throw new InvalidOperationException("已有操作正在进行。");
@@ -364,7 +385,7 @@ public sealed class LauncherEngine : IDisposable
         await Task.Run(RefreshClientVersion);
         if (bootstrap.Content is { } content)
         {
-            Emit("checking", "正在校验客户端资源…"); plan = await ContentUpdater.Plan(preferences.ClientDirectory, content, CancellationToken.None, Path.Combine(stateRoot, "content-check.txt"));
+            Emit("checking", "正在校验客户端资源…"); plan = await ContentUpdater.Plan(preferences.ClientDirectory, content, CancellationToken.None);
             Emit("ready", plan.Length == 0 ? "客户端资源与本服批准版本一致。" : $"发现 {plan.Length} 个待更新文件，请点击安装更新。");
         }
         else { plan = []; await GameContract.VerifyClient(preferences.ClientDirectory, Profile); Emit("ready", "客户端兼容校验通过；后台尚未发布资源更新。"); }

@@ -61,6 +61,17 @@ internal static class GameArchiveInstallChecks
                 $"installed {name} matches signed file bytes");
         }
 
+        // Regression: an up-to-date client must be seen as current. The old
+        // ArchiveNeedsUpdate double-hashed local files, so it always reported
+        // stale and re-downloaded even after a successful install.
+        var upToDateArchive = new GameArchive("", "", "unused", 0,
+            files.Select(kv => new ArchiveFile(kv.Key, kv.Value.Length, Trust.Digest(kv.Value))).ToArray());
+        check(!LauncherEngine.ArchiveNeedsUpdate(clientDir, upToDateArchive),
+            "up-to-date client is not considered stale (no double hash)");
+        File.WriteAllText(Path.Combine(clientDir, "Script.pvf"), "tampered pvf");
+        check(LauncherEngine.ArchiveNeedsUpdate(clientDir, upToDateArchive),
+            "tampered local file is detected as stale");
+
         // A genuinely corrupt package must still be rejected (guard against a
         // fix that simply disables verification). Rebuild a zip whose member
         // bytes differ from the signed file digests but whose package digest
