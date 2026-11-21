@@ -74,6 +74,7 @@ try
     await ContentCompatibilityChecks.Run(temp, Check);
     GameArchiveChecks.Run(root, key, Check);
     await GameArchiveInstallChecks.Run(temp, Check);
+    LocalStateStoreChecks.Run(temp, Check);
     var content = new ContentRelease("1", "author", "stable", 5, new string('d', 64), "https://content.example.test", "", [new("DNF.exe", 10, root.ExeSha256, true, "", "", 0), new("Script.pvf", 20, root.PvfSha256, true, "", "", 0)]);
     var bootstrap = new Bootstrap("DNF90-Flutter", 1, 10, root, [], content, null);
     byte[] Sign(Bootstrap value, RSASignaturePadding? padding = null)

@@ -22,6 +22,16 @@ public sealed record GameArchive(string PrimaryUrl, string FallbackUrl, string S
 public sealed record Bootstrap(string Product, int Format, long Sequence, PlayerProfile Profile, News[] News, ContentRelease? Content, BundleRelease? Launcher, GameArchive? Archive = null);
 // AutoCheck is the persisted legacy key; it now controls automatic check and installation of both update types.
 public sealed record Preferences(string ClientDirectory = "", string Account = "", bool RememberAccount = true, bool AutoCheck = true, bool ReducedEffects = false, DiagnosticOptions? Diagnostics = null, int AntiCheatConsentVersion = 0);
+
+// New minimal local state. Only three things survive a restart:
+//   identity.json - user account + compliance consent (never configuration)
+//   anchor.json   - anti-rollback sequence anchors + repeated-failure guard
+// Everything else (profile/news/versions/manifests/flags) is gateway-signed
+// and held in memory only; see 登录器架构重构设计.md.
+public sealed record ConsentState(int AntiCheat = 0, int Diagnostics = 0, string DiagnosticsProblemType = "auto");
+public sealed record IdentityState(int V = 1, string Account = "", bool RememberAccount = true, ConsentState? Consent = null);
+public sealed record UpdateAttempt(string Target = "", int Failures = 0, string LastFailureUtc = "");
+public sealed record AnchorState(int V = 1, long Sequence = 0, long ContentSourceSequence = 0, UpdateAttempt? Attempt = null);
 public sealed record State(string Phase, string Message, double Progress, long Downloaded, long Total, bool CanLogin, bool HasUpdate, bool HasLauncherUpdate, string Source, string Version, Preferences Preferences, News[] News)
 {
     public string LauncherVersion => LauncherEngine.VersionText;
@@ -53,6 +63,10 @@ public sealed record BundleOutcome(string Version, bool Succeeded, string Reason
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true)]
 [JsonSerializable(typeof(Bootstrap))]
 [JsonSerializable(typeof(Preferences))]
+[JsonSerializable(typeof(IdentityState))]
+[JsonSerializable(typeof(ConsentState))]
+[JsonSerializable(typeof(AnchorState))]
+[JsonSerializable(typeof(UpdateAttempt))]
 [JsonSerializable(typeof(State))]
 [JsonSerializable(typeof(Request))]
 [JsonSerializable(typeof(Response))]
