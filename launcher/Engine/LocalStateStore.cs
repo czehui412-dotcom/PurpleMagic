@@ -64,11 +64,12 @@ public sealed class LocalStateStore
 
     public void AdvanceAnchor(Bootstrap next)
     {
+        // Advance the sequence only; the failure counter is deliberately kept
+        // so a re-fetch cannot silently reset a throttled update target.
         Anchor = Anchor with
         {
             Sequence = next.Sequence,
-            ContentSourceSequence = SourceSeq(next),
-            Attempt = new UpdateAttempt()
+            ContentSourceSequence = SourceSeq(next)
         };
         SaveAnchor();
     }

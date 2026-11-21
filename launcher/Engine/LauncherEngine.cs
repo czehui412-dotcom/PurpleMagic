@@ -35,6 +35,7 @@ public sealed class LauncherEngine : IDisposable
     private bool guardClosing;
 #endif
     private readonly DiagnosticService diagnostics;
+    private readonly LocalStateStore localState;
     public event Action<State>? Changed;
     private State state = new("ready", "正在读取本机设置…", 0, 0, 0, false, false, false, "本服批准源", "", new(), []);
     public State State { get => state with { Diagnostics = diagnostics?.Status }; private set => state = value; }
@@ -46,11 +47,34 @@ public sealed class LauncherEngine : IDisposable
 #if ANTICHEAT
         LegacyPreferences.Import(stateRoot);
 #endif
+        localState = new LocalStateStore(stateRoot);
+        localState.Load();
         var file = Path.Combine(stateRoot, "preferences.json");
         if (File.Exists(file)) preferences = JsonSerializer.Deserialize(File.ReadAllBytes(file), WireJson.Default.Preferences) ?? new();
         if (preferences.Diagnostics is { Enabled: true, HasConsent: false } legacy) {
             preferences = preferences with { Diagnostics = legacy with { Enabled = false } };
             SafeFiles.Atomic(file, JsonSerializer.SerializeToUtf8Bytes(preferences, WireJson.Default.Preferences));
+        }
+        // identity.json is authoritative for account + consent. Project into the
+        // legacy Preferences view so the UI and existing callers keep working
+        // during the transition; preferences.json stays as the UI view store.
+        if (localState.Identity.Consent is { } identityConsent)
+            preferences = preferences with
+            {
+                Account = localState.Identity.RememberAccount ? localState.Identity.Account : "",
+                RememberAccount = localState.Identity.RememberAccount,
+                AntiCheatConsentVersion = identityConsent.AntiCheat,
+                Diagnostics = (preferences.Diagnostics ?? new()) with
+                {
+                    ConsentVersion = identityConsent.Diagnostics != 0 ? DiagnosticOptions.CurrentConsent : 0,
+                    ProblemType = string.IsNullOrEmpty(identityConsent.DiagnosticsProblemType) ? "auto" : identityConsent.DiagnosticsProblemType
+                }
+            };
+        else if (File.Exists(file) && (preferences.Account.Length > 0 || preferences.AntiCheatConsentVersion > 0))
+        {
+            // First run after upgrade: seed identity from legacy preferences.
+            localState.SetAccount(preferences.Account, preferences.RememberAccount);
+            localState.SetConsent(preferences.AntiCheatConsentVersion, preferences.Diagnostics?.HasConsent == true ? 1 : 0, preferences.Diagnostics?.ProblemType ?? "auto");
         }
         var detected = ClientDirectoryDiscovery.Find(preferences.ClientDirectory, root.DefaultClientDirectory,
             AppContext.BaseDirectory, Environment.GetEnvironmentVariable(ClientDirectoryDiscovery.LaunchDirectoryVariable), Environment.CurrentDirectory);
@@ -162,14 +186,26 @@ public sealed class LauncherEngine : IDisposable
             {
                 if (ArchiveNeedsUpdate(archive))
                 {
+                    // Repeated-failure guard: stop auto-retry after 3 failures
+                    // on the same package; a manual "check/retry" clears it.
+                    if (localState.IsThrottled(archive.Sha256))
+                    {
+                        Emit("ready", "游戏资源更新多次失败，已暂停自动重试；请点「检查更新」手动重试或联系服主。");
+                        return false;
+                    }
                     Emit("downloading", "正在下载游戏资源更新包…", 0, archive.Size);
                     using var client = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
                     var live = new GameArchiveInstaller(client, diagnostics, (msg) => Emit("installing", msg));
                     using var cancel = new CancellationTokenSource(TimeSpan.FromMinutes(30)); download = cancel;
-                    var ok = await live.Install(preferences.ClientDirectory, archive,
-                        new Progress<double>(p => Emit("downloading", "正在下载游戏资源更新包…", (long)(p * archive.Size), archive.Size)), cancel.Token);
-                    download = null;
-                    if (ok) { clientVersion = ""; return true; }
+                    bool ok;
+                    try
+                    {
+                        ok = await live.Install(preferences.ClientDirectory, archive,
+                            new Progress<double>(p => Emit("downloading", "正在下载游戏资源更新包…", (long)(p * archive.Size), archive.Size)), cancel.Token);
+                    }
+                    finally { download = null; }
+                    if (ok) { localState.ResetFailures(); clientVersion = ""; return true; }
+                    localState.RecordFailure(archive.Sha256);
                     return false;
                 }
                 // Archive channel owns verification; skip the per-file blob channel.
@@ -199,6 +235,8 @@ public sealed class LauncherEngine : IDisposable
             var directoryChanged = value.ClientDirectory != preferences.ClientDirectory;
             preferences = value with { Account = value.RememberAccount ? value.Account : "" };
             SafeFiles.Atomic(Path.Combine(stateRoot, "preferences.json"), JsonSerializer.SerializeToUtf8Bytes(preferences, WireJson.Default.Preferences));
+            localState.SetAccount(value.Account, value.RememberAccount);
+            localState.SetConsent(value.AntiCheatConsentVersion, value.Diagnostics?.HasConsent == true ? 1 : 0, value.Diagnostics?.ProblemType ?? "auto");
             diagnostics.Configure(preferences.Diagnostics ?? new(), preferences.ClientDirectory, Profile.PvfSha256, bootstrap?.Sequence ?? 0, Profile, bootstrap?.Content?.Version, bootstrap?.Content?.SourceId);
             if (directoryChanged) { plan = []; await Task.Run(RefreshClientVersion); }
             Emit("ready", "设置已保存。");
@@ -246,6 +284,8 @@ public sealed class LauncherEngine : IDisposable
     }
     private async Task CheckCore()
     {
+        // An explicit check is a manual retry: clear the auto-retry throttle.
+        localState.ResetFailures();
         await RefreshMetadata();
         await PlanContent();
     }
@@ -303,7 +343,13 @@ public sealed class LauncherEngine : IDisposable
         while ((read = await input.ReadAsync(buffer, metadataTimeout.Token)) != 0) { if (output.Length + read > Trust.MaxMetadata) throw new InvalidDataException("发布数据超过限制。"); output.Write(buffer, 0, read); }
         var raw = output.ToArray(); var next = Trust.Verify(raw, root);
         if (bootstrap is not null && envelope is not null) Trust.CheckSequence(next, raw, bootstrap, envelope);
+        // Anchor-backed anti-rollback (only once anchored, so legacy/first-run
+        // states are not blocked). The anchor is advanced only after a full
+        // successful cycle, keeping half-updated states from being pinned.
+        if (localState.Anchor.Sequence > 0 && !localState.AntiRollbackAccept(next))
+            throw new InvalidDataException("发布版本出现回滚，已拒绝。");
         SafeFiles.Atomic(Path.Combine(stateRoot, "bootstrap.json"), raw); bootstrap = next; envelope = raw;
+        localState.AdvanceAnchor(next);
         diagnostics.Configure(preferences.Diagnostics ?? new(), preferences.ClientDirectory, Profile.PvfSha256, bootstrap?.Sequence ?? 0, Profile, bootstrap?.Content?.Version, bootstrap?.Content?.SourceId);
         diagnostics.Event("metadata_verified", metadataClock.Elapsed.TotalMilliseconds, bootstrap?.Sequence);
         Emit("checking", "发布信息已验证。");
@@ -479,6 +525,7 @@ public sealed class LauncherEngine : IDisposable
             diagnostics.Event("process_started", stageClock.Elapsed.TotalMilliseconds);
             preferences = preferences with { Account = preferences.RememberAccount ? input.Account.Trim() : "" };
             SafeFiles.Atomic(Path.Combine(stateRoot, "preferences.json"), JsonSerializer.SerializeToUtf8Bytes(preferences, WireJson.Default.Preferences));
+            localState.SetAccount(input.Account, preferences.RememberAccount);
             Emit("logging-in", "游戏进程已创建，正在等待客户端启动…");
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
             try { await game.WaitForExitAsync(timeout.Token); } catch (OperationCanceledException) when (timeout.IsCancellationRequested) { }
