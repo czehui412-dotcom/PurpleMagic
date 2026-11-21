@@ -69,6 +69,7 @@ public sealed class LauncherEngine : IDisposable
         diagnostics = new(stateRoot);
         diagnostics.Changed += () => Changed?.Invoke(State);
         diagnostics.Configure(preferences.Diagnostics ?? new(), preferences.ClientDirectory, Profile.PvfSha256, bootstrap?.Sequence ?? 0, Profile, bootstrap?.Content?.Version, bootstrap?.Content?.SourceId);
+        RecycleStalePortablePayloads();
         Emit("ready", previousUpdateFailure ?? (discovered ? "已自动识别客户端目录。" : preferences.ClientDirectory == "" ? "请选择客户端目录，检查更新后登录。" : "客户端目录已就绪。"));
     }
     private void Emit(string phase, string message, long current = 0, long total = 0)
@@ -212,6 +213,37 @@ public sealed class LauncherEngine : IDisposable
         await RefreshMetadata();
         await PlanContent();
     }
+    // 绿色模式便携入口每次换版会在 portable\anticheat\<payload sha>\ 解包一份新目录，
+    // 旧目录与 .prepare.lock 不会自行回收。启动时只清理非当前 sha 的目录和残留锁，
+    // 信任锚 state-anticheat\bootstrap.json 与当前解包目录始终保留。
+    private void RecycleStalePortablePayloads()
+    {
+        try
+        {
+            var app = Path.GetFullPath(AppContext.BaseDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (!string.Equals(Path.GetFileName(app), "app", StringComparison.OrdinalIgnoreCase)) return;
+            var install = Path.GetDirectoryName(app);
+            var cacheRoot = install is null ? null : Path.GetDirectoryName(install);
+            if (install is null || cacheRoot is null) return;
+            var current = Path.GetFileName(install);
+            if (!IsSha256Name(current)) return;
+            if (!string.Equals(Path.GetFileName(Path.GetDirectoryName(cacheRoot) ?? ""), "portable", StringComparison.OrdinalIgnoreCase)) return;
+            SafeFiles.NoLinks(cacheRoot);
+            foreach (var dir in Directory.EnumerateDirectories(cacheRoot))
+            {
+                var name = Path.GetFileName(dir);
+                if (!IsSha256Name(name) || string.Equals(name, current, StringComparison.OrdinalIgnoreCase)) continue;
+                try { Directory.Delete(dir, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            }
+            foreach (var file in Directory.EnumerateFiles(cacheRoot, ".*.prepare.lock"))
+            {
+                try { File.Delete(file); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            }
+        }
+        catch (Exception error) { diagnostics.Failure("portable_recycle_error", error); }
+    }
+    private static bool IsSha256Name(string name) =>
+        name.Length == 64 && name.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');
     private async Task RefreshMetadata()
     {
         var metadataClock = Stopwatch.StartNew();
