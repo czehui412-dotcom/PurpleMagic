@@ -368,8 +368,8 @@ function ArchiveSettings(_props: PageProps) {
     setSaving(true);
     try {
       await live.guard(async () => {
-        await live.http.put(
-          "/api/v1/hub/archive",
+        await live.http.raw(
+          "/admin/api/archive", "PUT",
           {
             primaryUrl: primaryUrl.trim(),
             fallbackUrl: fallbackUrl.trim(),
@@ -377,7 +377,7 @@ function ArchiveSettings(_props: PageProps) {
             size: manifest.size,
             files: manifest.files,
           },
-          { headers: { "If-Match": `"${revision}"` } },
+          undefined, undefined, { "If-Match": `"${revision}"` },
         );
         await load();
         setMessage("已发布。玩家下次启动将按新直链下载资源包。");
@@ -394,10 +394,10 @@ function ArchiveSettings(_props: PageProps) {
     setSaving(true);
     try {
       await live.guard(async () => {
-        await live.http.put(
-          "/api/v1/hub/archive",
+        await live.http.raw(
+          "/admin/api/archive", "PUT",
           { primaryUrl: "", fallbackUrl: "", sha256: "0".repeat(64), size: 1, files: [{ path: "DNF.exe", length: 1, sha256: "0".repeat(64) }] },
-          { headers: { "If-Match": `"${revision}"` } },
+          undefined, undefined, { "If-Match": `"${revision}"` },
         );
         await load();
         setMessage("已停用资源包直链，玩家回退到原有的逐文件更新通道。");

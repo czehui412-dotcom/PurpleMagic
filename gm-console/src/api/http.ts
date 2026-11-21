@@ -115,7 +115,7 @@ export class HttpClient {
   }
   async raw<T = any>(path: string, method = "GET", body?: unknown, key?: string,
     signal?: AbortSignal, headers: Record<string, string> = {}): Promise<T> {
-    if (["/admin/api/news", "/admin/api/news/entries", "/admin/api/source", "/admin/api/connection"].includes(path)) path = path.replace("/admin/api/", "/api/v1/hub/");
+    if (["/admin/api/news", "/admin/api/news/entries", "/admin/api/source", "/admin/api/connection", "/admin/api/archive"].includes(path)) path = path.replace("/admin/api/", "/api/v1/hub/");
     if (method === "GET") {
       const combined = signal ? AbortSignal.any([this.view.signal, signal]) : this.view.signal;
       combined.throwIfAborted();
@@ -144,7 +144,7 @@ export class HttpClient {
     headers: Record<string, string> = {},
   ): Promise<T> {
     // Resume stored announcement operations with their original request IDs.
-    if (["/admin/api/news", "/admin/api/news/entries", "/admin/api/source", "/admin/api/connection"].includes(path))
+    if (["/admin/api/news", "/admin/api/news/entries", "/admin/api/source", "/admin/api/connection", "/admin/api/archive"].includes(path))
       path = path.replace("/admin/api/", "/api/v1/hub/");
     if (!path.startsWith("/api/"))
       throw new Error("接口路径无效");
