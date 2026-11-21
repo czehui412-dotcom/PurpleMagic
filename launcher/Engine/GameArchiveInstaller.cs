@@ -1,7 +1,6 @@
 using System.IO.Compression;
 using System.Net;
 using System.Net.Http.Headers;
-using System.Security.Cryptography;
 using System.Text.Json;
 using Dnf90.Launcher.Diagnostics;
 
@@ -64,8 +63,8 @@ public sealed class GameArchiveInstaller
                     await src.CopyToAsync(dst, cancellationToken);
                 if (new FileInfo(stage).Length != file.Length)
                     throw new InvalidDataException("资源包文件大小不符：" + file.Path);
-                using var s = File.OpenRead(stage);
-                if (!string.Equals(Trust.Digest(SHA256.HashData(s)), file.Sha256, StringComparison.OrdinalIgnoreCase))
+                var staged = File.ReadAllBytes(stage);
+                if (!string.Equals(Trust.Digest(staged), file.Sha256, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException("资源包文件校验失败：" + file.Path);
                 extracted.Add((file, stage));
             }
@@ -110,10 +109,9 @@ public sealed class GameArchiveInstaller
         long offset = 0;
         if (File.Exists(temp))
         {
-            using var local = new FileStream(temp, FileMode.Open, FileAccess.Read);
-            var localHash = Trust.Digest(SHA256.HashData(local));
-            if (localHash == sha256) { progress?.Report(1); return File.ReadAllBytes(temp); }
-            offset = local.Length;
+            var localBytes = File.ReadAllBytes(temp);
+            if (string.Equals(Trust.Digest(localBytes), sha256, StringComparison.OrdinalIgnoreCase)) { progress?.Report(1); return localBytes; }
+            offset = localBytes.Length;
             if (offset <= 0 || offset >= size) { offset = 0; File.Delete(temp); }
         }
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
@@ -153,7 +151,9 @@ public sealed class GameArchiveInstaller
             }
         }
         var bytes = File.ReadAllBytes(temp);
-        if (bytes.Length > MaxZipBytes || !string.Equals(Trust.Digest(SHA256.HashData(bytes)), sha256, StringComparison.OrdinalIgnoreCase))
+        // Trust.Digest already computes SHA-256; hashing the digest again here
+        // made every package fail verification and re-download forever.
+        if (bytes.Length > MaxZipBytes || !string.Equals(Trust.Digest(bytes), sha256, StringComparison.OrdinalIgnoreCase))
         { File.Delete(temp); throw new InvalidDataException("下载内容校验失败，将尝试下一直链。"); }
         return bytes;
     }
