@@ -23,7 +23,10 @@ func TestPublishedContentBlobBoundary(t *testing.T) {
 	if w := call(h.PublicHandler(), "GET", path, "", nil, "", ""); w.Code != 404 {
 		t.Fatal("unpublished blob exposed")
 	}
-	h.state.Published.Content = &Content{Endpoint: h.profile.ApiURL, Files: []File{{Path: "DNF.exe", Sha256: strings.Repeat("c", 64), Length: 100, Downloadable: true, Compression: "gzip", BlobSha256: hash, BlobLength: int64(len(data))}}}
+	h.state.Published.Game = &GameArtifact{
+		Files: []ArtifactFile{{Path: "DNF.exe", SHA256: strings.Repeat("c", 64), Length: 100, Compression: "gzip", BlobSHA256: hash, BlobLength: int64(len(data))}},
+		Delivery: GameDelivery{Strategy: "blob", Endpoint: h.profile.ApiURL},
+	}
 	r := httptest.NewRequest("GET", path, nil)
 	r.Header.Set("Range", "bytes=3-9")
 	w := httptest.NewRecorder()
@@ -42,11 +45,11 @@ func TestPublishedContentBlobBoundary(t *testing.T) {
 	if w := call(h.PublicHandler(), "HEAD", path, "", nil, "", ""); w.Code != 200 || w.Body.Len() != 0 {
 		t.Fatal("head", w.Code)
 	}
-	h.state.Published.Content.Endpoint = "https://author.example.test"
+	h.state.Published.Game.Delivery.Endpoint = "https://author.example.test"
 	if w := call(h.PublicHandler(), "GET", path, "", nil, "", ""); w.Code != 404 {
 		t.Fatal("foreign source exposed")
 	}
-	h.state.Published.Content.Endpoint = h.profile.ApiURL
+	h.state.Published.Game.Delivery.Endpoint = h.profile.ApiURL
 	if err := os.WriteFile(filepath.Join(dir, hash), []byte("truncated"), 0600); err != nil {
 		t.Fatal(err)
 	}

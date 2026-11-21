@@ -333,7 +333,7 @@ function ArchiveSettings(_props: PageProps) {
   const [error, setError] = useState("");
 
   const load = async () => {
-    const data = (await live.http.get("/api/v1/hub/state")).data;
+    const data = await live.http.raw<Record<string, any>>("/api/v1/hub/state", "GET");
     const archive = data?.published?.archive;
     setRevision(data?.archiveRevision || "");
     setPrimaryUrl(archive?.primaryUrl || "");

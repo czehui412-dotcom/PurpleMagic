@@ -27,7 +27,6 @@ func TestClientInteropHarness(t *testing.T) {
 	var registrations atomic.Int32
 	h.profile.ExeSHA256 = digest(exe)
 	h.profile.PvfSHA256 = digest(pvf)
-	h.profile.DefaultClientDirectory = game
 	h.profile.ChannelServerID = 1
 	h.profile.PreviousChannelServerID = directoryID(0)
 	source, manifest := upstreamFixture(h)

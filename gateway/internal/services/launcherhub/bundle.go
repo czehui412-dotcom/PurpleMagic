@@ -167,7 +167,6 @@ func (h *Hub) uploadBundle(w http.ResponseWriter, r *http.Request) {
 	// preserving the current game endpoints and signed content compatibility.
 	h.state.Published.Profile.EnableQQBinding = h.profile.EnableQQBinding
 	h.state.Published.Profile.RequireQQBinding = h.profile.RequireQQBinding
-	h.syncGameArtifact()
 	h.state.Published.Sequence++
 	if e = h.save(); e != nil {
 		h.state.Published = previous

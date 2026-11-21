@@ -20,7 +20,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -210,24 +209,6 @@ func atomicFile(path string, b []byte) error {
 	}
 	return nil
 }
-// syncGameArtifact keeps the unified format=2 Game field in step with the
-// legacy Content/Archive fields. Archive (the active direct-link channel) wins
-// over Content. Returns true when the Game field changed.
-func (h *Hub) syncGameArtifact() bool {
-	var next *GameArtifact
-	if h.state.Published.Archive != nil {
-		next = gameArtifactFromArchive(h.state.Published.Archive)
-	} else {
-		next = gameArtifactFromContent(h.state.Published.Content)
-	}
-	if reflect.DeepEqual(next, h.state.Published.Game) {
-		return false
-	}
-	h.state.Published.Game = next
-	h.state.Published.Format = 2
-	return true
-}
-
 func (h *Hub) save() error {
 	raw, e := json.Marshal(h.state)
 	if e != nil {
@@ -341,8 +322,7 @@ func (h *Hub) publish(id string) (Bootstrap, error) {
 	}
 	previous := h.state.Published
 	oldHash := h.state.SourceDigests[key]
-	h.state.Published.Content = content
-	h.syncGameArtifact()
+	h.state.Published.Game = gameArtifactFromContent(content)
 	h.state.Published.Sequence++
 	h.state.SourceSequences[key] = m.Sequence
 	h.state.SourceDigests[key] = hash

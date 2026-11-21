@@ -213,7 +213,7 @@ func TestInspectPublishReplayAndPublicBoundary(t *testing.T) {
 		t.Fatal(e)
 	}
 	b, e := h.publish(c.ID)
-	if e != nil || b.Sequence != 2 || len(b.Content.Files) != 4 {
+	if e != nil || b.Sequence != 2 || b.Game == nil || len(b.Game.Files) != 4 {
 		t.Fatal(e)
 	}
 	w := call(h.PublicHandler(), "GET", "/launcher/v2/bootstrap.json", "", nil, "", "")

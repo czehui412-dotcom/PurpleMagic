@@ -15,7 +15,7 @@ import (
 
 var archivePathPart = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
-func archiveRevision(a *GameArchive) string {
+func archiveRevision(a *GameArtifact) string {
 	if a == nil {
 		return digest([]byte("empty"))
 	}
@@ -118,7 +118,7 @@ func (h *Hub) publishArchive(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	before := archiveRevision(h.state.Published.Archive)
+	before := archiveRevision(h.state.Published.Game)
 	if r.Header.Get("If-Match") == "" {
 		failure(w, 428, "请先读取当前资源包配置")
 		return
@@ -128,19 +128,17 @@ func (h *Hub) publishArchive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	previous := h.state.Published
-	// Both URLs empty disables the channel: publish nil so the signed bootstrap
-	// carries no archive and the launcher keeps its per-file channel.
+	// Both URLs empty disables the game-resource channel.
 	if input.PrimaryURL == "" && input.FallbackURL == "" {
-		h.state.Published.Archive = nil
+		h.state.Published.Game = nil
 	} else {
-		h.state.Published.Archive = &input
+		h.state.Published.Game = gameArtifactFromArchive(&input)
 	}
-	h.syncGameArtifact()
 	h.state.Published.Sequence++
 	if err := h.save(); err != nil {
 		h.state.Published = previous
 		failure(w, 500, "发布游戏资源直链失败")
 		return
 	}
-	reply(w, 200, map[string]any{"ok": true, "archiveRevision": archiveRevision(&input), "sequence": h.state.Published.Sequence})
+	reply(w, 200, map[string]any{"ok": true, "archiveRevision": archiveRevision(gameArtifactFromArchive(&input)), "sequence": h.state.Published.Sequence})
 }

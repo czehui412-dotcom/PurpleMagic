@@ -47,7 +47,6 @@ type Profile struct {
 	BootstrapPort           int      `json:"BootstrapPort"`
 	ExeSHA256               string   `json:"ExeSha256"`
 	PvfSHA256               string   `json:"PvfSha256"`
-	DefaultClientDirectory  string   `json:"DefaultClientDirectory"`
 	ChannelHistory          *History `json:"ChannelHistory,omitempty"`
 	ChannelServerID         int      `json:"ChannelServerId,omitempty"`
 	PreviousChannelServerID *int     `json:"PreviousChannelServerId,omitempty"`
@@ -55,6 +54,12 @@ type Profile struct {
 	AntiCheat               any      `json:"AntiCheat,omitempty"`
 
 	SecondClient *SecondClientCompatibility `json:"SecondClient,omitempty"`
+
+	// Gateway-signed UI/update policy (设计文档 §6.3). No local override.
+	UpdatePolicy             string `json:"UpdatePolicy,omitempty"`
+	UIFlags                  any    `json:"UIFlags,omitempty"`
+	DiagnosticsPolicy        string `json:"DiagnosticsPolicy,omitempty"`
+	RequiredAntiCheatConsent int    `json:"RequiredAntiCheatConsent,omitempty"`
 }
 
 // SecondClientCompatibility is the signed, server-delivered allow-list of client
@@ -224,16 +229,16 @@ func gameArtifactFromArchive(a *GameArchive) *GameArtifact {
 			PackageSHA256: a.SHA256, PackageSize: a.Size}}
 }
 
+// Bootstrap is format=2 only. Game is the sole game-resource authority; the
+// legacy Content/Archive fields and the format=1 transition path are removed.
 type Bootstrap struct {
 	Product  string        `json:"product"`
 	Format   int           `json:"format"`
 	Sequence int64         `json:"sequence"`
 	Profile  Profile       `json:"profile"`
 	News     []News        `json:"news"`
-	Content  *Content      `json:"content"`
 	Launcher *Bundle       `json:"launcher"`
-	Archive  *GameArchive  `json:"archive,omitempty"`
-	Game     *GameArtifact `json:"game,omitempty"`
+	Game     *GameArtifact `json:"game"`
 }
 type Candidate struct {
 	ID       string          `json:"id"`

@@ -20,14 +20,14 @@ func (h *Hub) serveContentBlob(w http.ResponseWriter, r *http.Request) bool {
 	}
 	var size int64
 	h.mu.Lock()
-	c := h.state.Published.Content
-	if c != nil && c.Endpoint == strings.TrimRight(h.profile.ApiURL, "/") {
-		for _, f := range c.Files {
-			key, length := f.Sha256, f.Length
+	g := h.state.Published.Game
+	if g != nil && g.Delivery.Strategy == "blob" && g.Delivery.Endpoint == strings.TrimRight(h.profile.ApiURL, "/") {
+		for _, f := range g.Files {
+			key, length := f.SHA256, f.Length
 			if f.Compression == "gzip" {
-				key, length = f.BlobSha256, f.BlobLength
+				key, length = f.BlobSHA256, f.BlobLength
 			}
-			if f.Downloadable && key == m[1] {
+			if key == m[1] {
 				size = length
 				break
 			}
