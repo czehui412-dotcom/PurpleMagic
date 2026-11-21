@@ -35,18 +35,13 @@ func TestGameArtifactDerivationAndSigning(t *testing.T) {
 		g.Delivery.PackageSHA256 != arch.SHA256 || g.Delivery.PackageSize != arch.Size || len(g.Files) != 2 {
 		t.Fatalf("archive-derived Game wrong: %+v", g)
 	}
-	if g.Files[0].SHA256 != arch.Files[0].SHA256 {
-		t.Fatal("Game file digests wrong")
-	}
-	// format MUST stay 1: legacy cores hard-reject format!=1 and would lose
-	// their self-update path. The additive Game field is the compatibility layer.
-	if h.state.Published.Format != 1 {
-		t.Fatalf("format must remain 1 for legacy-core compatibility, got %d", h.state.Published.Format)
+	if g.Files[0].SHA256 != arch.Files[0].SHA256 || h.state.Published.Format != 2 {
+		t.Fatal("Game file digests or format=2 not set")
 	}
 	// Idempotent: a second sync changes nothing.
 	if h.syncGameArtifact() { t.Fatal("second sync must be a no-op") }
 
-	// The signed bootstrap must carry game (additively) plus legacy fields.
+	// The signed bootstrap must carry game for format=2 clients.
 	raw := call(h.PublicHandler(), "GET", "/launcher/anticheat/v2/bootstrap.json", "", nil, "", "").Body.Bytes()
 	var env struct{ Payload string `json:"payload"` }
 	if e := json.Unmarshal(raw, &env); e != nil { t.Fatal(e) }
@@ -61,10 +56,10 @@ func TestGameArtifactDerivationAndSigning(t *testing.T) {
 		Archive *GameArchive `json:"archive"`
 	}
 	if e = json.Unmarshal(decoded, &payload); e != nil { t.Fatal(e) }
-	if payload.Format != 1 || payload.Game.Delivery.Strategy != "archive" || len(payload.Game.Files) != 2 {
-		t.Fatalf("signed bootstrap format/game wrong: format=%d game=%+v", payload.Format, payload.Game)
+	if payload.Format != 2 || payload.Game.Delivery.Strategy != "archive" || len(payload.Game.Files) != 2 {
+		t.Fatalf("signed bootstrap missing format=2 game: format=%d game=%+v", payload.Format, payload.Game)
 	}
-	if payload.Archive == nil { t.Fatal("legacy archive field must be kept for legacy cores") }
+	if payload.Archive == nil { t.Fatal("legacy archive field must be kept for one transition version") }
 
 	// Disabling archive falls back to content (blob strategy) if present.
 	h.state.Published.Archive = nil
