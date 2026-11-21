@@ -154,6 +154,28 @@ public sealed class LauncherEngine : IDisposable
                 if (BundleInstaller.SuppressAutomaticRetry(previousUpdateOutcome, bootstrap!.Launcher!.Version)) { Emit("ready", previousUpdateFailure!); return false; }
                 return await UpdateLauncherCore(uiPid);
             }
+            // Whole-archive channel: when enabled, a mismatch in DNF.exe/PVF is
+            // fixed silently from the signed direct links, then the launcher restarts.
+            var archive = bootstrap?.Archive;
+            if (archive is not null && preferences.ClientDirectory != "" &&
+                (!string.IsNullOrEmpty(archive.PrimaryUrl) || !string.IsNullOrEmpty(archive.FallbackUrl)))
+            {
+                if (ArchiveNeedsUpdate(archive))
+                {
+                    Emit("downloading", "正在下载游戏资源更新包…", 0, archive.Size);
+                    using var client = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+                    var live = new GameArchiveInstaller(client, diagnostics, (msg) => Emit("installing", msg));
+                    using var cancel = new CancellationTokenSource(TimeSpan.FromMinutes(30)); download = cancel;
+                    var ok = await live.Install(preferences.ClientDirectory, archive,
+                        new Progress<double>(p => Emit("downloading", "正在下载游戏资源更新包…", (long)(p * archive.Size), archive.Size)), cancel.Token);
+                    download = null;
+                    if (ok) { clientVersion = ""; return true; }
+                    return false;
+                }
+                // Archive channel owns verification; skip the per-file blob channel.
+                plan = [];
+                return false;
+            }
             await PlanContent();
             await InstallContent();
             return false;
@@ -201,6 +223,20 @@ public sealed class LauncherEngine : IDisposable
         finally { operation.Release(); }
     }
 
+    private bool ArchiveNeedsUpdate(GameArchive archive)
+    {
+        if (preferences.ClientDirectory == "") return false;
+        foreach (var (name, expected) in new[] { ("DNF.exe", archive.Files.FirstOrDefault(f => f.Path.Equals("DNF.exe", StringComparison.OrdinalIgnoreCase))?.Sha256),
+                                                 ("Script.pvf", archive.Files.FirstOrDefault(f => f.Path.Equals("Script.pvf", StringComparison.OrdinalIgnoreCase))?.Sha256) })
+        {
+            if (expected is null) continue;
+            var path = SafeFiles.Target(preferences.ClientDirectory, name);
+            if (!File.Exists(path)) return true;
+            using var stream = File.OpenRead(path);
+            if (!string.Equals(Trust.Digest(System.Security.Cryptography.SHA256.HashData(stream)), expected, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
     public async Task Check()
     {
         if (!await operation.WaitAsync(0)) throw new InvalidOperationException("已有操作正在进行。");

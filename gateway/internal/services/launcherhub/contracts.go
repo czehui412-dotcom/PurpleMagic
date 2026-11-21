@@ -147,14 +147,35 @@ type Bundle struct {
 	Size    int64  `json:"size"`
 	SHA256  string `json:"sha256"`
 }
+
+// GameArchive is the optional whole-archive delivery channel for game resources
+// (EXE/PVF/dll/NPK). It is delivered through a signed bootstrap so the launcher
+// knows the exact zip digest and per-file digests without trusting the CDN.
+// The two URLs are operator-supplied direct links; only the signed digests are
+// authoritative. Empty/absent means the channel is disabled and the launcher
+// keeps using the per-file blob channel.
+type ArchiveFile struct {
+	Path   string `json:"path"`
+	Length int64  `json:"length"`
+	SHA256 string `json:"sha256"`
+}
+type GameArchive struct {
+	PrimaryURL  string        `json:"primaryUrl"`
+	FallbackURL string        `json:"fallbackUrl"`
+	SHA256      string        `json:"sha256"`
+	Size        int64         `json:"size"`
+	Files       []ArchiveFile `json:"files"`
+}
+
 type Bootstrap struct {
-	Product  string   `json:"product"`
-	Format   int      `json:"format"`
-	Sequence int64    `json:"sequence"`
-	Profile  Profile  `json:"profile"`
-	News     []News   `json:"news"`
-	Content  *Content `json:"content"`
-	Launcher *Bundle  `json:"launcher"`
+	Product  string       `json:"product"`
+	Format   int          `json:"format"`
+	Sequence int64        `json:"sequence"`
+	Profile  Profile      `json:"profile"`
+	News     []News       `json:"news"`
+	Content  *Content     `json:"content"`
+	Launcher *Bundle      `json:"launcher"`
+	Archive  *GameArchive `json:"archive,omitempty"`
 }
 type Candidate struct {
 	ID       string          `json:"id"`

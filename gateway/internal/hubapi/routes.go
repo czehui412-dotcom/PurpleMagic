@@ -11,7 +11,7 @@ func Allowed(method, route string) bool {
 	case "POST":
 		return route == "news/entries"
 	case "PUT":
-		return route == "news" || route == "source" || route == "connection"
+		return route == "news" || route == "source" || route == "connection" || route == "archive"
 	}
 	return false
 }

@@ -215,10 +215,12 @@ func (h *Hub) adminHandler(identity func(*http.Request) (string, session, bool))
 			h.logout(w, r, id)
 		case r.Method == "PUT" && r.URL.Path == "/admin/api/connection":
 			h.publishConnection(w, r)
+		case r.Method == "PUT" && r.URL.Path == "/admin/api/archive":
+			h.publishArchive(w, r)
 		case r.Method == "GET" && r.URL.Path == "/admin/api/state":
 			h.mu.Lock()
 			defer h.mu.Unlock()
-			reply(w, 200, map[string]any{"csrf": s.CSRF, "expires": s.Expires, "sources": h.state.Sources, "published": h.state.Published, "gmConfigured": h.cfg.GMUpstream != "", "newsRevision": h.archiveRevision(), "newsManager": true, "newsTotal": len(h.newsEntries()), "connectionRevision": connectionRevision(h.state.Published.Profile)})
+			reply(w, 200, map[string]any{"csrf": s.CSRF, "expires": s.Expires, "sources": h.state.Sources, "published": h.state.Published, "gmConfigured": h.cfg.GMUpstream != "", "newsRevision": h.archiveRevision(), "newsManager": true, "newsTotal": len(h.newsEntries()), "connectionRevision": connectionRevision(h.state.Published.Profile), "archiveRevision": archiveRevision(h.state.Published.Archive)})
 		case r.Method == "PUT" && r.URL.Path == "/admin/api/source":
 			var source Source
 			if e := readBody(w, r, &source); e != nil {

@@ -15,7 +15,11 @@ public sealed record BundleRelease(string Version, string Url, long Size, string
 {
     public string BuildFlavor { get; set; } = "standard";
 }
-public sealed record Bootstrap(string Product, int Format, long Sequence, PlayerProfile Profile, News[] News, ContentRelease? Content, BundleRelease? Launcher);
+public sealed record ArchiveFile(string Path, long Length, string Sha256);
+// Whole-archive game resource delivery over operator-supplied direct links.
+// Only the signed digests are authoritative; the URLs are untrusted transport.
+public sealed record GameArchive(string PrimaryUrl, string FallbackUrl, string Sha256, long Size, ArchiveFile[] Files);
+public sealed record Bootstrap(string Product, int Format, long Sequence, PlayerProfile Profile, News[] News, ContentRelease? Content, BundleRelease? Launcher, GameArchive? Archive = null);
 // AutoCheck is the persisted legacy key; it now controls automatic check and installation of both update types.
 public sealed record Preferences(string ClientDirectory = "", string Account = "", bool RememberAccount = true, bool AutoCheck = true, bool ReducedEffects = false, DiagnosticOptions? Diagnostics = null, int AntiCheatConsentVersion = 0);
 public sealed record State(string Phase, string Message, double Progress, long Downloaded, long Total, bool CanLogin, bool HasUpdate, bool HasLauncherUpdate, string Source, string Version, Preferences Preferences, News[] News)
@@ -124,7 +128,36 @@ public static class Trust
             SignedUpdate.RequireHttps(bundle.Url);
             if (!Version.TryParse(bundle.Version, out _) || !Hash(bundle.Sha256) || bundle.Size is < 1 or > SignedUpdate.MaxPackageBytes || bundle.BuildFlavor is not ("standard" or "anticheat")) throw new InvalidDataException("登录器发布信息无效。");
         }
+        if (b.Archive is { } archive)
+        {
+            // Direct links are untrusted transport; http(s) is allowed but the
+            // signed digests below are the only authority for content identity.
+            if (!ValidArchiveUrl(archive.PrimaryUrl) || !ValidArchiveUrl(archive.FallbackUrl) ||
+                (archive.PrimaryUrl != "" && archive.PrimaryUrl == archive.FallbackUrl))
+                throw new InvalidDataException("游戏资源直链地址无效。");
+            if (!Hash(archive.Sha256) || archive.Size is < 1 or > 8L * 1024 * 1024 * 1024 ||
+                archive.Files is null || archive.Files.Length is < 1 or > 2000)
+                throw new InvalidDataException("游戏资源包信息无效。");
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var file in archive.Files)
+            {
+                SafeFiles.ValidateRelative(file.Path);
+                if (!seen.Add(file.Path) || !Hash(file.Sha256) || file.Length is < 1 or > 8L * 1024 * 1024 * 1024)
+                    throw new InvalidDataException("游戏资源包文件清单无效。");
+            }
+            // EXE/PVF delivered by the archive must match the trust root.
+            foreach (var (name, hash) in new[] { ("DNF.exe", b.Profile.ExeSha256), ("Script.pvf", b.Profile.PvfSha256) })
+                if (!archive.Files.Any(f => f.Path.Equals(name, StringComparison.OrdinalIgnoreCase) && f.Sha256.Equals(hash, StringComparison.OrdinalIgnoreCase)))
+                    throw new InvalidDataException("资源包与本服 EXE/PVF 指纹不一致。");
+        }
         return b;
+    }
+    private static bool ValidArchiveUrl(string url)
+    {
+        if (string.IsNullOrEmpty(url)) return true;
+        if (url.Length > 2048 || !Uri.TryCreate(url, UriKind.Absolute, out var uri)) return false;
+        return (uri.Scheme == "http" || uri.Scheme == "https") && !string.IsNullOrEmpty(uri.Host) &&
+               string.IsNullOrEmpty(uri.UserInfo) && string.IsNullOrEmpty(uri.Fragment);
     }
     public static void CheckSequence(Bootstrap next, byte[] nextRaw, Bootstrap previous, byte[] previousRaw)
     {

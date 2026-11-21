@@ -7,6 +7,7 @@ import {
   Send,
   Server,
   Globe,
+  Package,
 } from "lucide-react";
 import { Tabs, Field, type PageProps } from "../ui";
 import { HubStatus } from "../api/controls";
@@ -201,9 +202,9 @@ function HubSettings({
 
 export function Settings(props: PageProps) {
   const live = useLive();
-  const [tab, setTab] = useState<"news" | "source" | "pvf">("news");
+  const [tab, setTab] = useState<"news" | "source" | "pvf" | "archive">("news");
   useEffect(() => {
-    if (!live || tab === "pvf" || live.meta.hub) return;
+    if (!live || tab === "pvf" || tab === "archive" || live.meta.hub) return;
     void live.guard(() => live.hub());
     return () => live.cancelScope("hub");
   }, [live, tab]);
@@ -215,7 +216,7 @@ export function Settings(props: PageProps) {
           items={[
             { id: "news", label: "公告管理" },
             { id: "source", label: "下载源与游戏连接" },
-            ...(live ? [{ id: "pvf" as const, label: "PVF 数据模式" }] : []),
+            ...(live ? [{ id: "archive" as const, label: "游戏资源直链" }, { id: "pvf" as const, label: "PVF 数据模式" }] : []),
           ]}
           value={tab}
           onChange={(value) => {
@@ -226,6 +227,8 @@ export function Settings(props: PageProps) {
       </div>
       {tab === "pvf" ? (
         <PVFSettings {...props} />
+      ) : tab === "archive" ? (
+        <ArchiveSettings {...props} />
       ) : live && !props.state.api?.hub ? (
         <HubStatus />
       ) : (
@@ -311,5 +314,131 @@ function PVFSettings({ state }: PageProps) {
         </small>
       )}
     </section>
+  );
+}
+
+type ArchiveManifest = {
+  sha256: string;
+  size: number;
+  files: { path: string; length: number; sha256: string }[];
+};
+function ArchiveSettings(_props: PageProps) {
+  const live = useLive()!;
+  const [primaryUrl, setPrimaryUrl] = useState("");
+  const [fallbackUrl, setFallbackUrl] = useState("");
+  const [manifestText, setManifestText] = useState("");
+  const [revision, setRevision] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  const load = async () => {
+    const data = (await live.http.get("/api/v1/hub/state")).data;
+    const archive = data?.published?.archive;
+    setRevision(data?.archiveRevision || "");
+    setPrimaryUrl(archive?.primaryUrl || "");
+    setFallbackUrl(archive?.fallbackUrl || "");
+    if (archive?.sha256 && archive?.files) {
+      setManifestText(JSON.stringify(
+        { sha256: archive.sha256, size: archive.size, files: archive.files },
+        null,
+        2,
+      ));
+    }
+  };
+  useEffect(() => {
+    void live.guard(async () => {
+      try { await load(); } catch { /* hub 不可用时静默 */ }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(""); setMessage("");
+    let manifest: ArchiveManifest;
+    try {
+      manifest = JSON.parse(manifestText);
+      if (!manifest.sha256 || !manifest.size || !Array.isArray(manifest.files) || !manifest.files.length)
+        throw new Error("清单缺少 sha256 / size / files");
+    } catch (err) {
+      setError("清单 JSON 无效：" + (err instanceof Error ? err.message : String(err)));
+      return;
+    }
+    setSaving(true);
+    try {
+      await live.guard(async () => {
+        await live.http.put(
+          "/api/v1/hub/archive",
+          {
+            primaryUrl: primaryUrl.trim(),
+            fallbackUrl: fallbackUrl.trim(),
+            sha256: manifest.sha256,
+            size: manifest.size,
+            files: manifest.files,
+          },
+          { headers: { "If-Match": `"${revision}"` } },
+        );
+        await load();
+        setMessage("已发布。玩家下次启动将按新直链下载资源包。");
+      });
+    } catch (err) {
+      setError("发布失败：" + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const disable = async () => {
+    setError(""); setMessage("");
+    setSaving(true);
+    try {
+      await live.guard(async () => {
+        await live.http.put(
+          "/api/v1/hub/archive",
+          { primaryUrl: "", fallbackUrl: "", sha256: "0".repeat(64), size: 1, files: [{ path: "DNF.exe", length: 1, sha256: "0".repeat(64) }] },
+          { headers: { "If-Match": `"${revision}"` } },
+        );
+        await load();
+        setMessage("已停用资源包直链，玩家回退到原有的逐文件更新通道。");
+      });
+    } catch (err) {
+      setError("停用失败：" + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form className="glass content-panel" onSubmit={save}>
+      <h2><Package size={20} />游戏资源直链</h2>
+      <p className="muted">
+        配置整包更新的两条直链。玩家启动登录器时若 DNF.exe 或 Script.pvf 与签名版本不一致，
+        会自动从主链下载 zip，主链 5 秒无响应切备用链，下载校验后覆盖并重启登录器。
+        登录器本体更新不受影响。
+      </p>
+      <Field label="主直链地址 (A)">
+        <input value={primaryUrl} onChange={(e) => setPrimaryUrl(e.target.value)} placeholder="http://example.com/UrlHeader.php?d=..." />
+      </Field>
+      <Field label="备用直链地址 (B)">
+        <input value={fallbackUrl} onChange={(e) => setFallbackUrl(e.target.value)} placeholder="http://backup.example.com/UrlHeader.php?d=..." />
+      </Field>
+      <Field label="资源清单 JSON（由 pack_game_archive.py 生成）">
+        <textarea rows={10} value={manifestText} onChange={(e) => setManifestText(e.target.value)} placeholder='{"sha256":"...","size":0,"files":[{"path":"DNF.exe","length":0,"sha256":"..."}]}' />
+      </Field>
+      {message && <p role="status" className="muted">{message}</p>}
+      {error && <p role="alert" className="inline-error">{error}</p>}
+      <div className="form-footer">
+        <button type="button" className="secondary" onClick={() => void disable()} disabled={saving || !revision}>
+          停用直链
+        </button>
+        <button type="button" className="secondary" onClick={() => void live.guard(load)} disabled={saving}>
+          刷新
+        </button>
+        <button className="primary" disabled={saving || !revision}>
+          <Save size={15} />发布直链
+        </button>
+      </div>
+    </form>
   );
 }
