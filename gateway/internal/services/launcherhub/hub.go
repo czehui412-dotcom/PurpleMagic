@@ -146,6 +146,24 @@ func New(c Config) (*Hub, error) {
 	if h.state.Published.Profile.ExeSHA256 != p.ExeSHA256 || h.state.Published.Profile.PvfSHA256 != p.PvfSHA256 {
 		return nil, errors.New("approved profile changed: migrate publication state explicitly")
 	}
+	// Legacy publications were signed without a buildFlavor. Clients validate
+	// buildFlavor against the running core, so an empty value would be rejected
+	// by every anticheat launcher. Backfill it from the stored bundle marker and
+	// advance the sequence once so caches pick up the newly signed payload.
+	if lb := h.state.Published.Launcher; lb != nil && lb.BuildFlavor == "" {
+		flavor := "standard"
+		if strings.Contains(lb.URL, "/anticheat/") {
+			flavor = "anticheat"
+		}
+		if fromZip := h.bundleFlavorOnDisk(lb.SHA256); fromZip != "" {
+			flavor = fromZip
+		}
+		lb.BuildFlavor = flavor
+		h.state.Published.Sequence++
+		if e = h.save(); e != nil {
+			return nil, e
+		}
+	}
 	if c.Baidu != nil {
 		h.baidu, e = baidudelivery.New(*c.Baidu)
 		if e != nil {

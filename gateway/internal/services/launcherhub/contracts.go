@@ -142,10 +142,11 @@ type Content struct {
 	Files               []File `json:"files"`
 }
 type Bundle struct {
-	Version string `json:"version"`
-	URL     string `json:"url"`
-	Size    int64  `json:"size"`
-	SHA256  string `json:"sha256"`
+	Version     string `json:"version"`
+	URL         string `json:"url"`
+	Size        int64  `json:"size"`
+	SHA256      string `json:"sha256"`
+	BuildFlavor string `json:"buildFlavor"`
 }
 
 // GameArchive is the optional whole-archive delivery channel for game resources

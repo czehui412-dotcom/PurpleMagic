@@ -3,6 +3,7 @@ package launcherhub
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -195,5 +196,92 @@ func TestBundlePublicationRangeAndRejection(t *testing.T) {
 	restarted, err := New(h.cfg)
 	if err != nil || restarted.state.Published.Launcher.SHA256 != bundle.SHA256 {
 		t.Fatal("bundle publication lost on restart", err)
+	}
+	if restarted.state.Published.Launcher.BuildFlavor != "standard" {
+		t.Fatal("markerless bundle should default to standard flavor")
+	}
+}
+
+func TestBundleBuildFlavorSignedAndBackfilled(t *testing.T) {
+	h, _ := fixture(t)
+	cookie, csrf := auth(t, h, true)
+	// A bundle carrying an explicit anticheat marker must be published and
+	// signed with that flavor so anticheat cores recognize the launcher update.
+	anticheatFixture := func(marker string) []byte {
+		var out bytes.Buffer
+		z := zip.NewWriter(&out)
+		for _, name := range []string{"DNF90.exe", "DNF90.Core.exe", "flutter_windows.dll", "data/app.so", "data/icudtl.dat", "build-flavor.json"} {
+			entry, err := z.Create(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if name == "build-flavor.json" {
+				entry.Write([]byte(marker))
+			} else {
+				entry.Write([]byte("fixture " + name))
+			}
+		}
+		if err := z.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return out.Bytes()
+	}
+	upload := func(raw []byte) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", "https://admin.example.test/admin/api/bundle/0.3.0", bytes.NewReader(raw))
+		r.AddCookie(cookie)
+		r.Header.Set("Origin", "https://admin.example.test")
+		r.Header.Set("X-CSRF-Token", csrf)
+		r.Header.Set("Content-Type", "application/zip")
+		w := httptest.NewRecorder()
+		h.AdminHandler().ServeHTTP(w, r)
+		return w
+	}
+	if w := upload(anticheatFixture(`{"format":1,"flavor":"anticheat"}`)); w.Code != 200 {
+		t.Fatal("anticheat bundle publish failed", w.Code, w.Body.String())
+	}
+	if h.state.Published.Launcher.BuildFlavor != "anticheat" {
+		t.Fatal("anticheat marker not recorded on published bundle")
+	}
+	// The signed public bootstrap must carry buildFlavor so the client's
+	// HasLauncherUpdate check (BuildFlavor == core flavor) can pass.
+	raw := call(h.PublicHandler(), "GET", "/launcher/anticheat/v2/bootstrap.json", "", nil, "", "").Body.Bytes()
+	var env struct {
+		Payload string `json:"payload"`
+	}
+	if e := json.Unmarshal(raw, &env); e != nil {
+		t.Fatal(e)
+	}
+	decoded, e := base64.StdEncoding.DecodeString(env.Payload)
+	if e != nil {
+		t.Fatal(e)
+	}
+	var payload struct {
+		Launcher struct {
+			BuildFlavor string `json:"buildFlavor"`
+		} `json:"launcher"`
+	}
+	if e = json.Unmarshal(decoded, &payload); e != nil {
+		t.Fatal(e)
+	}
+	if payload.Launcher.BuildFlavor != "anticheat" {
+		t.Fatal("signed bootstrap launcher missing buildFlavor=anticheat")
+	}
+
+	// Simulate a legacy published state with no buildFlavor: New() must
+	// backfill from the stored bundle marker and advance the sequence.
+	h.state.Published.Launcher.BuildFlavor = ""
+	if e = h.save(); e != nil {
+		t.Fatal(e)
+	}
+	seq := h.state.Published.Sequence
+	restarted, err := New(h.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restarted.state.Published.Launcher.BuildFlavor != "anticheat" {
+		t.Fatal("legacy bundle flavor not backfilled on load")
+	}
+	if restarted.state.Published.Sequence <= seq {
+		t.Fatal("backfill must advance sequence")
 	}
 }
