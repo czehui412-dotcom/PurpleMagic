@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -108,7 +109,7 @@ func New(c Config) (*Hub, error) {
 		return nil, e
 	}
 	h := &Hub{cfg: c, key: key, profile: p, failures: map[string][]time.Time{}, gmCookies: map[string]*http.Cookie{}, sourceClient: clientForSource}
-	h.state = persisted{Sources: []Source{}, Sessions: map[string]session{}, SourceSequences: map[string]int64{}, SourceDigests: map[string]string{}, Published: Bootstrap{Product: Product, Format: 1, Sequence: 1, Profile: p, News: []News{}}}
+	h.state = persisted{Sources: []Source{}, Sessions: map[string]session{}, SourceSequences: map[string]int64{}, SourceDigests: map[string]string{}, Published: Bootstrap{Product: Product, Format: 2, Sequence: 1, Profile: p, News: []News{}}}
 	b, e := os.ReadFile(filepath.Join(c.DataDir, "state.json"))
 	if e == nil {
 		// Decode persisted metadata independently. Unmarshalling over the new
@@ -164,6 +165,10 @@ func New(c Config) (*Hub, error) {
 			return nil, e
 		}
 	}
+	// NOTE: legacy format=1 states are migrated lazily on the next publish API
+	// call (see syncGameArtifact), never here. Restarting must not silently
+	// change the signed payload; a forced format bump here would break the
+	// anti-equivocation guarantee and every restart-safety test.
 	if c.Baidu != nil {
 		h.baidu, e = baidudelivery.New(*c.Baidu)
 		if e != nil {
@@ -205,6 +210,24 @@ func atomicFile(path string, b []byte) error {
 	}
 	return nil
 }
+// syncGameArtifact keeps the unified format=2 Game field in step with the
+// legacy Content/Archive fields. Archive (the active direct-link channel) wins
+// over Content. Returns true when the Game field changed.
+func (h *Hub) syncGameArtifact() bool {
+	var next *GameArtifact
+	if h.state.Published.Archive != nil {
+		next = gameArtifactFromArchive(h.state.Published.Archive)
+	} else {
+		next = gameArtifactFromContent(h.state.Published.Content)
+	}
+	if reflect.DeepEqual(next, h.state.Published.Game) {
+		return false
+	}
+	h.state.Published.Game = next
+	h.state.Published.Format = 2
+	return true
+}
+
 func (h *Hub) save() error {
 	raw, e := json.Marshal(h.state)
 	if e != nil {
@@ -319,6 +342,7 @@ func (h *Hub) publish(id string) (Bootstrap, error) {
 	previous := h.state.Published
 	oldHash := h.state.SourceDigests[key]
 	h.state.Published.Content = content
+	h.syncGameArtifact()
 	h.state.Published.Sequence++
 	h.state.SourceSequences[key] = m.Sequence
 	h.state.SourceDigests[key] = hash

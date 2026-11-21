@@ -168,15 +168,72 @@ type GameArchive struct {
 	Files       []ArchiveFile `json:"files"`
 }
 
+// GameArtifact is the unified game-resource publication consumed by
+// format=2 launchers. It merges the legacy per-file blob channel (Content)
+// and the whole-archive direct-link channel (Archive) into one signed object:
+// Delivery.Strategy is "blob" or "archive". The per-file SHA256 is always the
+// authoritative digest; package/blob digests are transport integrity only.
+// Legacy Content/Archive fields stay on Bootstrap for one transition version.
+type ArtifactFile struct {
+	Path        string `json:"path"`
+	Length      int64  `json:"length"`
+	SHA256      string `json:"sha256"`
+	BlobSHA256  string `json:"blobSha256,omitempty"`
+	BlobLength  int64  `json:"blobLength,omitempty"`
+	Compression string `json:"compression,omitempty"`
+}
+type GameDelivery struct {
+	Strategy           string   `json:"strategy"` // "blob" | "archive"
+	Endpoint           string   `json:"endpoint,omitempty"`
+	CertificateSHA256  string   `json:"certificateSha256,omitempty"`
+	URLs               [2]string `json:"urls,omitempty"`
+	PackageSHA256      string   `json:"packageSha256,omitempty"`
+	PackageSize        int64    `json:"packageSize,omitempty"`
+}
+type GameArtifact struct {
+	Version  string         `json:"version"`
+	SourceID string         `json:"sourceId,omitempty"`
+	Sequence int64          `json:"sequence,omitempty"`
+	Files    []ArtifactFile `json:"files"`
+	Delivery GameDelivery   `json:"delivery"`
+}
+
+// gameArtifactFromContent builds a blob-strategy artifact from the legacy
+// per-file content channel, preserving final-file digests.
+func gameArtifactFromContent(c *Content) *GameArtifact {
+	if c == nil { return nil }
+	files := make([]ArtifactFile, 0, len(c.Files))
+	for _, f := range c.Files {
+		files = append(files, ArtifactFile{Path: f.Path, Length: f.Length, SHA256: f.Sha256,
+			BlobSHA256: f.BlobSha256, BlobLength: f.BlobLength, Compression: f.Compression})
+	}
+	return &GameArtifact{Version: c.Version, SourceID: c.SourceID, Sequence: c.SourceSequence, Files: files,
+		Delivery: GameDelivery{Strategy: "blob", Endpoint: c.Endpoint, CertificateSHA256: c.CertificateSHA256}}
+}
+
+// gameArtifactFromArchive builds an archive-strategy artifact from the legacy
+// whole-archive direct-link channel.
+func gameArtifactFromArchive(a *GameArchive) *GameArtifact {
+	if a == nil { return nil }
+	files := make([]ArtifactFile, 0, len(a.Files))
+	for _, f := range a.Files {
+		files = append(files, ArtifactFile{Path: f.Path, Length: f.Length, SHA256: f.SHA256})
+	}
+	return &GameArtifact{Files: files,
+		Delivery: GameDelivery{Strategy: "archive", URLs: [2]string{a.PrimaryURL, a.FallbackURL},
+			PackageSHA256: a.SHA256, PackageSize: a.Size}}
+}
+
 type Bootstrap struct {
-	Product  string       `json:"product"`
-	Format   int          `json:"format"`
-	Sequence int64        `json:"sequence"`
-	Profile  Profile      `json:"profile"`
-	News     []News       `json:"news"`
-	Content  *Content     `json:"content"`
-	Launcher *Bundle      `json:"launcher"`
-	Archive  *GameArchive `json:"archive,omitempty"`
+	Product  string        `json:"product"`
+	Format   int           `json:"format"`
+	Sequence int64         `json:"sequence"`
+	Profile  Profile       `json:"profile"`
+	News     []News        `json:"news"`
+	Content  *Content      `json:"content"`
+	Launcher *Bundle       `json:"launcher"`
+	Archive  *GameArchive  `json:"archive,omitempty"`
+	Game     *GameArtifact `json:"game,omitempty"`
 }
 type Candidate struct {
 	ID       string          `json:"id"`

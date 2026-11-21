@@ -135,6 +135,7 @@ func (h *Hub) publishArchive(w http.ResponseWriter, r *http.Request) {
 	} else {
 		h.state.Published.Archive = &input
 	}
+	h.syncGameArtifact()
 	h.state.Published.Sequence++
 	if err := h.save(); err != nil {
 		h.state.Published = previous
