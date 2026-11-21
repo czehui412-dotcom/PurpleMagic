@@ -35,7 +35,7 @@ internal static class ClientDirectoryChecks
         var cache = Path.Combine(temp, "portable-cache", "app");
         Directory.CreateDirectory(cache);
         check(ClientDirectoryDiscovery.Find("", client, Path.Combine(install, "app"), null, temp) == install, "installed app finds the adjacent client before a configured default");
-        check(ClientDirectoryDiscovery.Find(client, "", cache, install, temp) == client, "valid manually selected client is preserved");
+        check(ClientDirectoryDiscovery.Find(client, "", cache, install, temp) == install, "launch entry directory is authoritative over a stale saved selection");
         check(ClientDirectoryDiscovery.Find(Path.Combine(temp, "removed-client"), "", cache, install, temp) == install, "stale remembered path falls back to the current entry");
         check(ClientDirectoryDiscovery.Find("", "", cache, null, client) == client, "explicit working directory can identify the client");
         var nested = Path.Combine(temp, "portable-root", "client");

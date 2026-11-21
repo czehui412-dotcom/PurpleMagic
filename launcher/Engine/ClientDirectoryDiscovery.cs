@@ -6,8 +6,14 @@ internal static class ClientDirectoryDiscovery
 
     internal static string Find(string saved, string configured, string appDirectory, string? entryDirectory, string workingDirectory)
     {
-        // An existing selection wins. A moved installation or empty first-run
-        // preference can recover from the real entry directory, including portable.
+        // The launcher always lives next to DNF.exe. The portable entry passes
+        // that directory in DNF90_LAUNCH_DIRECTORY, so it is authoritative and
+        // is never overridden by a saved selection or a guessed path. This is
+        // the core of the "no local client directory" design; the remaining
+        // fallbacks are transition compatibility for standard builds/tests and
+        // are removed in P5.
+        var fromEntry = Inspect(entryDirectory);
+        if (fromEntry != "") return fromEntry;
         var selected = Inspect(saved);
         if (selected != "") return selected;
         var app = Path.TrimEndingDirectorySeparator(appDirectory);
