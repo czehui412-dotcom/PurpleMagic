@@ -36,4 +36,16 @@ internal static class MaintenanceChecks
         var code = BundleProcesses.ExitCodeByIdentity(attached.Id); // running: no exit code yet, must not throw
         check(code == -1 || code == 259, "kernel exit code read on attached process does not throw");
     }
+
+    // Maintenance kill is temporary: it must not latch the shutdown gate, or a
+    // game launched after maintenance ends is killed on Track ("code -1").
+    internal static async Task MaintenanceKeepsSupervisorOpen(Action<bool, string> check)
+    {
+        var supervisor = new ProcessSupervisor();
+        await supervisor.StopAllForMaintenanceAsync();
+        check(!supervisor.ShuttingDown, "maintenance stop leaves supervisor open for new games");
+        // With no children this is a no-op; a later Track must not be rejected.
+        await supervisor.ShutdownAsync();
+        check(supervisor.ShuttingDown, "real shutdown still latches the gate");
+    }
 }

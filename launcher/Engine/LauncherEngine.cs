@@ -14,7 +14,7 @@ namespace Dnf90.Launcher;
 
 public sealed class LauncherEngine : IDisposable
 {
-    public const string VersionText = "1.0.37";
+    public const string VersionText = "1.0.38";
     public const string ContentCapabilitiesHeader = "X-DNF90-Content-Capabilities";
     public const string ContentCapabilities = "native-plugins-v1";
     private readonly PlayerProfile root;
@@ -608,9 +608,10 @@ public sealed class LauncherEngine : IDisposable
     {
         StopProtectedGames(shuttingDown: false);
         var killed = 0;
-        // 走统一治理器：优雅关 + 内核句柄等待，确保句柄真正释放后才返回，
-        // 否则紧接着登录会撞上残留 journal.json / 存活 DNF.exe 的误报。
-        processes.ShutdownSync();
+        // 走统一治理器：优雅关 + 内核句柄等待，确保句柄真正释放后才返回。
+        // 必须用维护专用方法——不能 latch ShuttingDown，否则关维护后登录的
+        // 新游戏会被 Track() 立即停掉（客户端提前退出，代码 -1）。
+        processes.StopAllForMaintenanceSync();
         lock (games) { killed = games.Count; games.Clear(); }
         // 兜底：清理不属于本登录器但残留的 DNF.exe（占用 PVF 文件句柄）。
         foreach (var process in Process.GetProcessesByName("DNF"))

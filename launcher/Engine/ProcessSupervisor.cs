@@ -38,6 +38,24 @@ internal sealed class ProcessSupervisor
         lock (gate) children.RemoveAll(c => c.Pid == process.Id);
     }
 
+    // Stops and forgets every tracked game WITHOUT latching the shutdown gate.
+    // Maintenance is temporary: once maintenance ends the user must be able to
+    // launch a new game. Latching here made Track() kill every later game, which
+    // surfaced as "客户端提前退出（代码 -1）".
+    internal async Task StopAllForMaintenanceAsync(Action<string, int>? log = null)
+    {
+        List<Child> snapshot;
+        lock (gate)
+        {
+            snapshot = [.. children];
+            children.Clear();
+        }
+        var stopped = await StopAll(snapshot);
+        log?.Invoke("maintenance_stop_games", stopped);
+    }
+    internal void StopAllForMaintenanceSync() => StopAllForMaintenanceAsync().GetAwaiter().GetResult();
+
+    // Real launcher exit: latch the gate so any late Track() is killed too.
     internal async Task ShutdownAsync(Action<string, int>? log = null)
     {
         List<Child> snapshot;
@@ -48,14 +66,19 @@ internal sealed class ProcessSupervisor
             snapshot = [.. children];
             children.Clear();
         }
+        var stopped = await StopAll(snapshot);
+        log?.Invoke("shutdown_stop_games", stopped);
+    }
+    internal void ShutdownSync() => ShutdownAsync().GetAwaiter().GetResult();
+
+    private static async Task<int> StopAll(List<Child> snapshot)
+    {
         var stopped = 0;
         foreach (var child in snapshot)
         {
             try { await BundleProcesses.StopByIdentity(child.Pid, child.Started); stopped++; }
             catch (Exception error) when (error is InvalidOperationException or Win32Exception or TimeoutException) { stopped++; }
         }
-        log?.Invoke("shutdown_stop_games", stopped);
+        return stopped;
     }
-
-    internal void ShutdownSync() => ShutdownAsync().GetAwaiter().GetResult();
 }

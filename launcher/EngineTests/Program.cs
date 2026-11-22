@@ -49,6 +49,7 @@ try
 #if ANTICHEAT
     MaintenanceChecks.Run(temp, new PlayerProfile("https://fixture.test", new('a', 64), "", "", "192.0.2.1", 7001, new('b', 64), new('c', 64), ""), Check);
     MaintenanceChecks.AttachedProcessIdentity(Check);
+    await MaintenanceChecks.MaintenanceKeepsSupervisorOpen(Check);
 #endif
     await DiagnosticChecks.Run(temp, Check);
     await DiagnosticContextChecks.Run(temp, Check);
