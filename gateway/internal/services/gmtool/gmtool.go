@@ -151,6 +151,12 @@ type Server struct {
 	// startup; nil in standalone GM service and in isolated tests.
 	onMaintenance func(enabled bool, message, since string, kicked int)
 
+	// Paodian background scheduler. Started once in newServer so standalone and
+	// managed modes share the exact path; cancelled and joined in Stop.
+	paodianWorker *paodianWorker
+	paodianCancel context.CancelFunc
+	paodianDone   chan struct{}
+
 	stopOnce sync.Once
 	ownsDB   bool
 }
@@ -231,6 +237,13 @@ func newServer(cfg Config, deps Deps, managed bool) (*Server, error) {
 		}
 		return nil, err
 	}
+	// Single paodian scheduler per Server, in the shared construction path.
+	// Tests that construct with empty DSN still get a worker, but it stays idle
+	// until config.enabled is saved; Stop always cancels it.
+	pctx, pcancel := context.WithCancel(context.Background())
+	server.paodianCancel = pcancel
+	server.paodianDone = make(chan struct{})
+	server.startPaodianWorker(pctx)
 	return server, nil
 }
 
@@ -273,6 +286,16 @@ func (s *Server) Stop() error {
 	}
 	var err error
 	s.stopOnce.Do(func() {
+		if s.paodianCancel != nil {
+			s.paodianCancel()
+			if s.paodianDone != nil {
+				select {
+				case <-s.paodianDone:
+				case <-time.After(3 * time.Second):
+					s.cfg.Logger("gm-paodian-worker-stop-timeout", "action", "stop")
+				}
+			}
+		}
 		if s.http != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 			defer cancel()

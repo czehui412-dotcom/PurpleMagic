@@ -62,6 +62,8 @@ func (s *Server) v1Routes() http.Handler {
 	writes.HandleFunc("POST /api/v1/settings/system", s.v1SystemSettings)
 	mux.HandleFunc("GET /api/v1/maintenance", s.v1Maintenance)
 	writes.HandleFunc("POST /api/v1/maintenance", s.v1Maintenance)
+	mux.HandleFunc("GET /api/v1/paodian", s.v1Paodian)
+	writes.HandleFunc("POST /api/v1/paodian", s.v1Paodian)
 	mux.HandleFunc("GET /api/v1/characters/{characterId}/rename-operations", s.v1RenameLog)
 	writes.HandleFunc("POST /api/v1/characters/{characterId}/rename-operations/preview", s.v1RenameOperation)
 	writes.HandleFunc("POST /api/v1/characters/{characterId}/rename-operations", s.v1RenameOperation)

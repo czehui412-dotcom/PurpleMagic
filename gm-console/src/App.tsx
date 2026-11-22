@@ -7,6 +7,7 @@ import {
   ScrollText,
   WandSparkles,
   Gift,
+  Coins,
   CalendarDays,
   ShieldCheck,
   Users,
@@ -57,6 +58,7 @@ import { ActivitiesPage } from "./pages/Activities";
 import { AbyssDropRatePage } from "./pages/AbyssDropRate";
 import { BenefitsPage } from "./pages/Benefits";
 import { SystemSettings } from "./pages/SystemSettings";
+import { PaodianPage } from "./pages/Paodian";
 import { shouldRefreshOnVisibility } from "./api/http";
 import { Settings } from "./pages/Settings";
 import { ConsoleAPI } from "./api/console";
@@ -122,6 +124,7 @@ const navigation = [
   { id: "activities", label: "活动管理", icon: CalendarDays, title: "游戏活动", sub: "管理全服活动开关，查看实际生效状态。" },
   { id: "abyss-drop", label: "深渊掉率", icon: Swords, title: "深渊 / 时空裂缝掉率", sub: "PVF 原样、保底件数档或旧概率档，分别控制普通深渊与时空裂缝。" },
   { id: "benefits", label: "福利规则", icon: Gift, title: "福利规则", sub: "全局奖励自动发放，查看每个账号与角色的发放情况。" },
+  { id: "paodian", label: "在线泡点", icon: Coins, title: "在线泡点", sub: "按在线账号定时发放代币，网关直接写入钱包。" },
   {
     id: "accounts",
     label: "账号与角色",
@@ -384,7 +387,7 @@ export function App() {
             pending.command.recipients.includes(c.id),
         )
       : [];
-  const noIdentity = ["query", "accounts", "settings", "system", "benefits", "activities", "anti-cheat"].includes(section);
+  const noIdentity = ["query", "accounts", "settings", "system", "benefits", "activities", "anti-cheat", "paodian"].includes(section);
   if (live && !state.api?.authenticated) {
     return <LiveContext.Provider value={live}>
       <div className="app-shell auth-shell">
@@ -747,6 +750,8 @@ export function App() {
                     <AbyssDropRatePage {...props} />
                   ) : section === "benefits" ? (
                     <BenefitsPage {...props} />
+                  ) : section === "paodian" ? (
+                    <PaodianPage {...props} />
                   ) : section === "system" ? (
                     <SystemSettings {...props} />
                   ) : section === "gm" ? (
