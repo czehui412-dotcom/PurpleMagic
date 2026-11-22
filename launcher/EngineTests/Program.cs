@@ -46,6 +46,9 @@ var temp = Path.Combine(Path.GetTempPath(), "dnf90-engine-tests-" + Guid.NewGuid
 try
 {
     AntiCheatChecks.Policy(temp, Check);
+#if ANTICHEAT
+    MaintenanceChecks.Run(temp, new PlayerProfile("https://fixture.test", new('a', 64), "", "", "192.0.2.1", 7001, new('b', 64), new('c', 64), ""), Check);
+#endif
     await DiagnosticChecks.Run(temp, Check);
     await DiagnosticContextChecks.Run(temp, Check);
     await ContractDiagnosticsChecks.Run(temp, Check);

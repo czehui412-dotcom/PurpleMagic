@@ -14,7 +14,7 @@ namespace Dnf90.Launcher;
 
 public sealed class LauncherEngine : IDisposable
 {
-    public const string VersionText = "1.0.33";
+    public const string VersionText = "1.0.34";
     public const string ContentCapabilitiesHeader = "X-DNF90-Content-Capabilities";
     public const string ContentCapabilities = "native-plugins-v1";
     private readonly PlayerProfile root;
@@ -575,17 +575,26 @@ public sealed class LauncherEngine : IDisposable
     public Task<ContractObservationItem> ReportDiagnosticObservation(ContractObservationInput input) => diagnostics.ReportObservation(input);
     public Task<DiagnosticExport> ExportDiagnosticBundle(ContractBundleExportInput input) => diagnostics.ExportBundle(input);
     public void RecordDiagnosticError(Exception error) => diagnostics.Failure("operation_error", error);
-    public void StopProtectedGames()
+    public void StopProtectedGames() => StopProtectedGames(shuttingDown: true);
+    // shuttingDown=false 仅用于维护踢人：结束当前保护会话以释放 DNF.exe/PVF 句柄，
+    // 但不能置 guardClosing 或取消 guardLifetime——那是登录器退出的一次性闸门，
+    // 置位后维护结束时所有后续登录都会误报「登录器已关闭。」。
+    private void StopProtectedGames(bool shuttingDown)
     {
 #if ANTICHEAT
-        lock (guardLock) { guardClosing = true; guardLifetime.Cancel(); foreach (var session in protectedGames) session.Dispose(); protectedGames.Clear(); }
+        lock (guardLock)
+        {
+            if (shuttingDown) { guardClosing = true; guardLifetime.Cancel(); }
+            foreach (var session in protectedGames) session.Dispose();
+            protectedGames.Clear();
+        }
 #endif
     }
     // 维护模式：关闭本登录器启动的全部游戏进程（反作弊与普通路径都覆盖），
     // 以及残留的 DNF.exe，释放 Script.pvf 文件句柄以便替换新 PVF。
     public int KillGamesForMaintenance()
     {
-        StopProtectedGames();
+        StopProtectedGames(shuttingDown: false);
         var killed = 0;
         lock (games)
         {
