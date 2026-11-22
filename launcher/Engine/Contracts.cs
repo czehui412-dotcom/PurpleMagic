@@ -32,6 +32,7 @@ public sealed record ConsentState(int AntiCheat = 0, int Diagnostics = 0, string
 public sealed record IdentityState(int V = 1, string Account = "", bool RememberAccount = true, ConsentState? Consent = null, string ClientDirectory = "");
 public sealed record UpdateAttempt(string Target = "", int Failures = 0, string LastFailureUtc = "");
 public sealed record AnchorState(int V = 1, long Sequence = 0, long GameSourceSequence = 0, UpdateAttempt? Attempt = null);
+public sealed record MaintenanceReply(bool Active, string Message, int KilledGames = 0);
 public sealed record State(string Phase, string Message, double Progress, long Downloaded, long Total, bool CanLogin, bool HasUpdate, bool HasLauncherUpdate, string Source, string Version, Preferences Preferences, News[] News)
 {
     public string LauncherVersion => LauncherEngine.VersionText;
@@ -40,13 +41,12 @@ public sealed record State(string Phase, string Message, double Progress, long D
     public string BuildFlavor => LauncherBuild.Flavor;
     public bool AntiCheatEnabled { get; init; }
     public string MaintenanceUrl { get; init; } = "";
-    public string MaintenanceCertSha { get; init; } = "";
     public bool QQBindingEnabled { get; init; }
     public bool RequireQQBinding { get; init; }
     public DiagnosticStatus? Diagnostics { get; init; }
 }
 public sealed record Request(int Id, string Method, JsonElement Args);
-public sealed record Response(int Id, bool Ok, string? Error = null, State? State = null, bool Restart = false, ConfigurationReset? ConfigurationReset = null, DiagnosticExport? DiagnosticExport = null, LoginReply? AccountResult = null, string? ErrorCode = null, long RetryAfter = 0, string? DiagnosticIncidentId = null, string? DiagnosticEntryId = null, ContractObservationItem? DiagnosticObservation = null, CdkReply? CdkResult = null, CdkCharactersReply? CdkCharacters = null, int KilledGames = 0);
+public sealed record Response(int Id, bool Ok, string? Error = null, State? State = null, bool Restart = false, ConfigurationReset? ConfigurationReset = null, DiagnosticExport? DiagnosticExport = null, LoginReply? AccountResult = null, string? ErrorCode = null, long RetryAfter = 0, string? DiagnosticIncidentId = null, string? DiagnosticEntryId = null, ContractObservationItem? DiagnosticObservation = null, CdkReply? CdkResult = null, CdkCharactersReply? CdkCharacters = null, MaintenanceReply? Maintenance = null);
 public sealed record ConfigurationReset(bool Reset, string? BackupPath);
 public sealed record Event(string Type, State State);
 public sealed record Credentials(string Account, string Password, string? Invite = null);

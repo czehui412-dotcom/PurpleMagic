@@ -147,10 +147,8 @@ class LauncherController extends ChangeNotifier {
   bool requireQQBinding = false;
   // 维护模式：从 edge 静态文件轮询，命中时关闭游戏并禁止登录。
   String maintenanceUrl = '';
-  String maintenanceCertSha = '';
   bool maintenanceActive = false;
   String maintenanceMessage = '';
-  bool _maintenanceKilled = false;
   Timer? _maintenanceTimer;
   final _accountCooldowns = <String, DateTime>{};
   int accountCooldown(String account) {
@@ -307,7 +305,6 @@ class LauncherController extends ChangeNotifier {
     diagnosticType = diagnosticPrefs['problemType'] as String? ?? 'auto';
     diagnostics = state['diagnostics'] as Map<String, dynamic>? ?? const {};
     final newMaintUrl = state['maintenanceUrl'] as String? ?? '';
-    maintenanceCertSha = state['maintenanceCertSha'] as String? ?? '';
     if (newMaintUrl != maintenanceUrl) {
       maintenanceUrl = newMaintUrl;
       _startMaintenancePolling();
@@ -327,37 +324,19 @@ class LauncherController extends ChangeNotifier {
   Future<void> _pollMaintenance() async {
     if (_disposed || maintenanceUrl.isEmpty) return;
     try {
-      final http = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-      // 服务器用自签名证书（指纹已在签名 profile 的 trust root 中）。只信任指纹
-      // 与 core 下发一致的连接，避免中间人伪造维护状态诱导关闭客户端。
-      http.badCertificateCallback = (cert, host, port) {
-        if (maintenanceCertSha.isEmpty) return false;
-        final fp = cert.sha256.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
-        return fp == maintenanceCertSha.toLowerCase() && host == Uri.parse(maintenanceUrl).host;
-      };
-      final uri = Uri.parse(maintenanceUrl);
-      final req = await http.getUrl(uri).timeout(const Duration(seconds: 8));
-      final resp = await req.close().timeout(const Duration(seconds: 8));
-      final body = await utf8.decodeStream(resp).timeout(const Duration(seconds: 8));
-      http.close();
-      if (resp.statusCode != 200) return;
-      final data = jsonDecode(body) as Map<String, dynamic>;
-      final active = data['enabled'] == true;
-      final msg = data['message'] as String? ?? '服务器维护中，请稍后再试';
+      // core 用签名信任根校验证书读取状态；维护开启时由 core 关闭游戏进程。
+      final result = await client.call('checkMaintenance');
+      final maint = result['maintenance'] as Map<String, dynamic>? ?? {};
+      final active = maint['active'] == true;
+      final msg = maint['message'] as String? ?? '服务器维护中，请稍后再试';
       if (_disposed) return;
       if (active != maintenanceActive || msg != maintenanceMessage) {
         maintenanceActive = active;
         maintenanceMessage = msg;
         notifyListeners();
       }
-      // 维护开启时：关闭本登录器启动的游戏进程，释放 PVF 文件句柄。只执行一次。
-      if (active && !_maintenanceKilled) {
-        _maintenanceKilled = true;
-        try { await client.call('killGames'); } catch (_) {}
-      }
-      if (!active) _maintenanceKilled = false;
     } catch (_) {
-      // 网络抖动/404 时保持上一次状态，不误报维护。
+      // 网络抖动时保持上一次状态，不误报维护。
     }
   }
 

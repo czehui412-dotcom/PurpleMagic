@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -102,7 +103,6 @@ public sealed class LauncherEngine : IDisposable
             ClientVersion = clientVersion,
             LauncherHome = home,
             MaintenanceUrl = MaintenanceStatusUrl(root.ApiUrl),
-            MaintenanceCertSha = root.CertificateSha256,
             QQBindingEnabled = root.EnableQQBinding,
             RequireQQBinding = Profile.RequireQQBinding,
             AntiCheatEnabled = LauncherBuild.AntiCheat && Profile.AntiCheat is { Enabled: true }
@@ -123,6 +123,34 @@ public sealed class LauncherEngine : IDisposable
         }
         catch { return ""; }
     }
+    // 由 Flutter 定时通过 RPC 调用：读取签名信任根认可的 edge 静态维护状态；
+    // 证书校验复用下载器的信任根逻辑（root.CertificateSha256）。维护开启时
+    // 关闭本登录器启动的游戏进程，释放 Script.pvf 文件句柄以便替换新 PVF。
+    public async Task<MaintenanceReply> CheckMaintenance()
+    {
+        var url = MaintenanceStatusUrl(root.ApiUrl);
+        if (string.IsNullOrEmpty(url)) return new(false, "");
+        try
+        {
+            using var http = new HttpClient(LauncherBundleDownloader.CreateHandler(root)) { Timeout = TimeSpan.FromSeconds(10) };
+            using var resp = await http.GetAsync(url);
+            if (!resp.IsSuccessStatusCode) return new(false, "");
+            using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+            var el = doc.RootElement;
+            var active = el.TryGetProperty("enabled", out var e) && e.ValueKind == JsonValueKind.True;
+            var msg = el.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String ? (m.GetString() ?? "") : "";
+            var killed = 0;
+            if (active && !maintenanceKilled)
+            {
+                killed = KillGamesForMaintenance();
+                maintenanceKilled = true;
+            }
+            else if (!active) maintenanceKilled = false;
+            return new(active, msg, killed);
+        }
+        catch { return new(false, ""); }
+    }
+    private bool maintenanceKilled;
     public void Pause() => download?.Cancel();
     internal static bool SupportsContent(PlayerProfile profile) =>
         (string.IsNullOrEmpty(profile.MinimumLauncherVersion) || Version.Parse(VersionText) >= Version.Parse(profile.MinimumLauncherVersion)) &&
