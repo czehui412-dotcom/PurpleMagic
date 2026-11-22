@@ -14,7 +14,7 @@ namespace Dnf90.Launcher;
 
 public sealed class LauncherEngine : IDisposable
 {
-    public const string VersionText = "1.0.30";
+    public const string VersionText = "1.0.31";
     public const string ContentCapabilitiesHeader = "X-DNF90-Content-Capabilities";
     public const string ContentCapabilities = "native-plugins-v1";
     private readonly PlayerProfile root;
@@ -194,7 +194,9 @@ public sealed class LauncherEngine : IDisposable
         if (Path.GetFileName(app) != "app") throw new InvalidDataException("请从完整安装目录启动登录器。");
         using var ui = Process.GetProcessById(uiPid);
         if (!Path.GetFullPath(ui.MainModule!.FileName).Equals(Path.Combine(app, "DNF90.exe"), StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("登录器父进程不匹配。");
-        var work = Path.Combine(stateRoot, "tmp", "bundle", Guid.NewGuid().ToString("N")); SafeFiles.NoLinks(work); Directory.CreateDirectory(work);
+        // BundleInstaller.ValidateJob（及 ReportHealthy）要求 work 位于 install\.updates\<guid> 下；
+        // 放在 stateRoot\tmp\bundle 会导致 Apply 抛「更新事务目录无效」且跳过失败恢复。
+        var work = Path.Combine(install, ".updates", Guid.NewGuid().ToString("N")); SafeFiles.NoLinks(work); Directory.CreateDirectory(work);
         var package = Path.Combine(work, "bundle.zip");
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(30)); download = timeout;
         Emit("downloading", "正在下载登录器完整更新包…", 0, release.Size);
