@@ -53,6 +53,9 @@ async Task Dispatch(Request request)
                 var restart = await engine.AutomaticUpdate(request.Args.GetProperty("uiPid").GetInt32());
                 Respond(new(request.Id, true, State: engine.State, Restart: restart)); return;
             case "update": await engine.UpdateContent(); break;
+            case "killGames":
+                var killedGames = engine.KillGamesForMaintenance();
+                Respond(new(request.Id, true, State: engine.State, KilledGames: killedGames)); return;
             case "pause": engine.Pause(); break;
             case "preferences": await engine.SavePreferences(request.Args.Deserialize(WireJson.Default.Preferences) ?? throw new InvalidDataException()); break;
             case "register": await engine.Register(request.Args.Deserialize(WireJson.Default.Credentials) ?? throw new InvalidDataException()); break;

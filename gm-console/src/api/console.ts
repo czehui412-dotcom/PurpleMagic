@@ -1374,6 +1374,12 @@ export class ConsoleAPI {
       : await this.http.post<{carbonMode:boolean}>("/api/v1/settings/system", {carbonMode:enabled});
     if (!signal.aborted) { this.meta.systemSettings = data; this.publish(); }
   }
+  async maintenanceStatus(): Promise<{enabled:boolean;message?:string;since?:string;kicked?:number}> {
+    return (await this.http.get<{maintenance:{enabled:boolean;message?:string;since?:string;kicked?:number}}>("/api/v1/maintenance")).data.maintenance;
+  }
+  async setMaintenance(op: "enter"|"leave", message = ""): Promise<{enabled:boolean;kicked?:number}> {
+    return (await this.http.post<{maintenance:{enabled:boolean;kicked?:number}}>("/api/v1/maintenance", { op, message })).maintenance;
+  }
   async premium() {
     const id = this.current, c = this.state.characters.find(c => c.id === id);
     if (!c || !this.meta.features["premium.read"]) return;

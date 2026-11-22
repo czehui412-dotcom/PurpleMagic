@@ -85,6 +85,24 @@ type Request struct {
 	RiftDropRate *int `json:"riftDropRate,omitempty"`
 	// 时空裂缝保底件数档：-1=退出件数档；0=关闭；2..5=每次 1..N 件。
 	RiftDropCount *int `json:"riftDropCount,omitempty"`
+	// 维护模式：op=enter 踢全部在线；leave 解除；status 只读。
+	Maintenance *MaintenanceChange `json:"maintenance,omitempty"`
+}
+
+// MaintenanceChange 与游戏服协议一致。
+type MaintenanceChange struct {
+	Op      string `json:"op"`
+	Message string `json:"message,omitempty"`
+	Actor   string `json:"actor,omitempty"`
+}
+
+// MaintenanceStatus 与游戏服协议一致。
+type MaintenanceStatus struct {
+	Enabled   bool   `json:"enabled"`
+	Message   string `json:"message,omitempty"`
+	Since     string `json:"since,omitempty"`
+	Kicked    int    `json:"kicked,omitempty"`
+	UpdatedAt string `json:"updatedAt,omitempty"`
 }
 
 // HellDropRateStatus 与游戏服协议字段保持一致。
@@ -137,4 +155,5 @@ type Response struct {
 	RegistrationTotal   int                  `json:"registrationTotal,omitempty"`
 	HellDropRate        *HellDropRateStatus  `json:"hellDropRate,omitempty"`
 	RiftDropRate        *RiftDropRateStatus  `json:"riftDropRate,omitempty"`
+	Maintenance         *MaintenanceStatus   `json:"maintenance,omitempty"`
 }

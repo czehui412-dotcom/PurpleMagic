@@ -39,12 +39,13 @@ public sealed record State(string Phase, string Message, double Progress, long D
     public string LauncherHome { get; init; } = "";
     public string BuildFlavor => LauncherBuild.Flavor;
     public bool AntiCheatEnabled { get; init; }
+    public string MaintenanceUrl { get; init; } = "";
     public bool QQBindingEnabled { get; init; }
     public bool RequireQQBinding { get; init; }
     public DiagnosticStatus? Diagnostics { get; init; }
 }
 public sealed record Request(int Id, string Method, JsonElement Args);
-public sealed record Response(int Id, bool Ok, string? Error = null, State? State = null, bool Restart = false, ConfigurationReset? ConfigurationReset = null, DiagnosticExport? DiagnosticExport = null, LoginReply? AccountResult = null, string? ErrorCode = null, long RetryAfter = 0, string? DiagnosticIncidentId = null, string? DiagnosticEntryId = null, ContractObservationItem? DiagnosticObservation = null, CdkReply? CdkResult = null, CdkCharactersReply? CdkCharacters = null);
+public sealed record Response(int Id, bool Ok, string? Error = null, State? State = null, bool Restart = false, ConfigurationReset? ConfigurationReset = null, DiagnosticExport? DiagnosticExport = null, LoginReply? AccountResult = null, string? ErrorCode = null, long RetryAfter = 0, string? DiagnosticIncidentId = null, string? DiagnosticEntryId = null, ContractObservationItem? DiagnosticObservation = null, CdkReply? CdkResult = null, CdkCharactersReply? CdkCharacters = null, int KilledGames = 0);
 public sealed record ConfigurationReset(bool Reset, string? BackupPath);
 public sealed record Event(string Type, State State);
 public sealed record Credentials(string Account, string Password, string? Invite = null);

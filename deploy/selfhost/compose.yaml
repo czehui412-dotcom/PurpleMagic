@@ -18,6 +18,7 @@ x-gateway-volumes: &gateway-volumes
   - ${PM_DATA}/private:/data/private:ro
   - ${PM_DATA}/hub:/data/hub
   - ${PM_DATA}/releases:/data/releases:ro
+  - ${PM_DATA}/status:/data/status
 
 x-index: &index
   <<: *app
@@ -50,6 +51,7 @@ services:
       - ${PM_DATA}/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ${PM_DATA}/tls-web:/etc/nginx/tls:ro
       - ${PM_DATA}/tls-player/ca.pem:/etc/nginx/player-ca.pem:ro
+      - ${PM_DATA}/status:/var/www/status:ro
     restart: unless-stopped
     depends_on: [gm]
   schema:

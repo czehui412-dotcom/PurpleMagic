@@ -145,6 +145,12 @@ class LauncherController extends ChangeNotifier {
       antiCheatEnabled && antiCheatConsentVersion != antiCheatDisclosureVersion;
   bool qqBindingEnabled = false;
   bool requireQQBinding = false;
+  // 维护模式：从 edge 静态文件轮询，命中时关闭游戏并禁止登录。
+  String maintenanceUrl = '';
+  bool maintenanceActive = false;
+  String maintenanceMessage = '';
+  bool _maintenanceKilled = false;
+  Timer? _maintenanceTimer;
   final _accountCooldowns = <String, DateTime>{};
   int accountCooldown(String account) {
     final remaining =
@@ -299,9 +305,51 @@ class LauncherController extends ChangeNotifier {
     diagnosticConsentVersion = diagnosticPrefs['consentVersion'] as int? ?? 0;
     diagnosticType = diagnosticPrefs['problemType'] as String? ?? 'auto';
     diagnostics = state['diagnostics'] as Map<String, dynamic>? ?? const {};
+    final newMaintUrl = state['maintenanceUrl'] as String? ?? '';
+    if (newMaintUrl != maintenanceUrl) {
+      maintenanceUrl = newMaintUrl;
+      _startMaintenancePolling();
+    }
 
     connected = true;
     notifyListeners();
+  }
+
+  void _startMaintenancePolling() {
+    _maintenanceTimer?.cancel();
+    if (maintenanceUrl.isEmpty) return;
+    _pollMaintenance();
+    _maintenanceTimer = Timer.periodic(const Duration(seconds: 30), (_) => _pollMaintenance());
+  }
+
+  Future<void> _pollMaintenance() async {
+    if (_disposed || maintenanceUrl.isEmpty) return;
+    try {
+      final http = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+      final uri = Uri.parse(maintenanceUrl);
+      final req = await http.getUrl(uri).timeout(const Duration(seconds: 8));
+      final resp = await req.close().timeout(const Duration(seconds: 8));
+      final body = await utf8.decodeStream(resp).timeout(const Duration(seconds: 8));
+      http.close();
+      if (resp.statusCode != 200) return;
+      final data = jsonDecode(body) as Map<String, dynamic>;
+      final active = data['enabled'] == true;
+      final msg = data['message'] as String? ?? '服务器维护中，请稍后再试';
+      if (_disposed) return;
+      if (active != maintenanceActive || msg != maintenanceMessage) {
+        maintenanceActive = active;
+        maintenanceMessage = msg;
+        notifyListeners();
+      }
+      // 维护开启时：关闭本登录器启动的游戏进程，释放 PVF 文件句柄。只执行一次。
+      if (active && !_maintenanceKilled) {
+        _maintenanceKilled = true;
+        try { await client.call('killGames'); } catch (_) {}
+      }
+      if (!active) _maintenanceKilled = false;
+    } catch (_) {
+      // 网络抖动/404 时保持上一次状态，不误报维护。
+    }
   }
 
   Future<void> initialize() async {
@@ -477,6 +525,7 @@ class LauncherController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _maintenanceTimer?.cancel();
     client.dispose();
     super.dispose();
   }

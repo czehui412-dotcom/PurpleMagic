@@ -1,13 +1,18 @@
 import { useEffect, useState } from "react";
-import { Atom, LoaderCircle, Settings2 } from "lucide-react";
+import { AlertTriangle, Atom, LoaderCircle, Settings2, Wrench } from "lucide-react";
 import { useLive } from "../api/context";
 import type { PageProps } from "../ui";
+
+type Maintenance = { enabled: boolean; message?: string; since?: string; kicked?: number };
 
 export function SystemSettings({ state }: PageProps) {
   const live = useLive();
   const [demoMode, setDemoMode] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [maint, setMaint] = useState<Maintenance>({ enabled: false });
+  const [maintMsg, setMaintMsg] = useState("服务器维护中，请稍后再试");
+  const [maintBusy, setMaintBusy] = useState(false);
   const supported = !live || !!state.api?.features["system.settings"];
   const policy = state.api?.systemSettings;
   const enabled = live ? !!policy?.carbonMode : demoMode;
@@ -15,6 +20,10 @@ export function SystemSettings({ state }: PageProps) {
     if (live && supported) void live.guard(() => live.systemSettings());
     return () => live?.cancelScope("systemSettings");
   }, [live, supported]);
+  useEffect(() => {
+    if (!live) return;
+    void live.maintenanceStatus().then(setMaint).catch(() => {});
+  }, [live]);
   async function change(enabled: boolean) {
     setSaving(true); setMessage("");
     try {
@@ -23,6 +32,18 @@ export function SystemSettings({ state }: PageProps) {
       setMessage(enabled ? "碳铀模式已开启，全局生效" : "碳铀模式已关闭");
     } catch (e) { setMessage((e as Error).message); }
     finally { setSaving(false); }
+  }
+  async function toggleMaintenance(enter: boolean) {
+    if (!live) { setMessage("维护开关需要连接真实网关"); return; }
+    setMaintBusy(true); setMessage("");
+    try {
+      const st = await live.setMaintenance(enter ? "enter" : "leave", maintMsg);
+      setMaint(prev => ({ ...prev, ...st }));
+      setMessage(enter
+        ? `维护已开启，已踢 ${st.kicked ?? 0} 名在线玩家。可以安全更换 PVF / 重启服务。`
+        : "维护已结束，玩家可以重新登录。");
+    } catch (e) { setMessage("维护切换失败：" + (e as Error).message); }
+    finally { setMaintBusy(false); }
   }
   return <div className="form-layout">
     <section className="glass content-panel">
@@ -39,6 +60,25 @@ export function SystemSettings({ state }: PageProps) {
           {saving && <LoaderCircle size={16} className="spin" />}
         </label>
         {!supported && <p className="muted">更新管理网关后可使用系统设置。</p>}
+      </div>
+      <div className="form-section">
+        <h3><Wrench size={18} /> 服务器维护</h3>
+        <p>开启维护会<strong>踢掉全部在线玩家</strong>并阻止新登录，同时通知登录器关闭客户端、显示维护页。用于安全更换 PVF / 重启服务端或网关。</p>
+        <p className="muted">当前状态：<strong style={{color: maint.enabled ? "#e8a33d" : undefined}}>{maint.enabled ? "维护中" : "正常"}</strong>{maint.enabled && maint.since ? `（自 ${maint.since}）` : ""}</p>
+        <label className="checkline">
+          维护提示：<input value={maintMsg} disabled={maint.enabled || maintBusy}
+            onChange={e => setMaintMsg(e.target.value)} style={{flex: 1, minWidth: 200}} />
+        </label>
+        {!maint.enabled ? (
+          <button disabled={!live || maintBusy} onClick={() => void toggleMaintenance(true)}>
+            {maintBusy ? <LoaderCircle size={16} className="spin" /> : <AlertTriangle size={16} />} 开启维护并踢下线
+          </button>
+        ) : (
+          <button disabled={!live || maintBusy} onClick={() => void toggleMaintenance(false)}>
+            {maintBusy ? <LoaderCircle size={16} className="spin" /> : <Wrench size={16} />} 结束维护
+          </button>
+        )}
+        {!live && <p className="muted">演示模式不连接真实网关，维护开关不可用。</p>}
         {message && <p role="status">{message}</p>}
       </div>
     </section>

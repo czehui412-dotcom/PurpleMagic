@@ -1132,6 +1132,23 @@ class _PreviewHomeState extends State<PreviewHome> {
                 ),
               ),
               const SizedBox(height: 16),
+              if (model.maintenanceActive)
+                Container(
+                  key: const Key('maintenance-banner'),
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0x33e8a33d),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xffe8a33d)),
+                  ),
+                  child: Text(
+                    model.maintenanceMessage.isEmpty ? '服务器维护中，请稍后再试' : model.maintenanceMessage,
+                    style: const TextStyle(color: Color(0xffe8a33d), fontSize: 13),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              if (model.maintenanceActive) const SizedBox(height: 12),
               _updateStatus(),
               const SizedBox(height: 15),
             ] else
@@ -1144,6 +1161,7 @@ class _PreviewHomeState extends State<PreviewHome> {
                 onPressed:
                     submitting ||
                         model.busy ||
+                        model.maintenanceActive ||
                         (!registering && !model.canLogin)
                     ? null
                     : _submit,
@@ -1178,7 +1196,9 @@ class _PreviewHomeState extends State<PreviewHome> {
                       const SizedBox(width: 12),
                     ],
                     Text(
-                      submitting
+                      model.maintenanceActive
+                          ? '服务器维护中'
+                          : submitting
                           ? '正在验证…'
                           : registering
                           ? '创建账号'

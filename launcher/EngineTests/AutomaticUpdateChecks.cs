@@ -9,6 +9,9 @@ internal static class AutomaticUpdateChecks
 {
     internal static async Task Run(string temp, PlayerProfile profile, Action<bool, string> check)
     {
+        check(LauncherEngine.MaintenanceStatusUrl("https://124.221.247.221:8443") == "https://124.221.247.221/status/maintenance.json",
+            "maintenance status URL derives from API host on default 443 (not gateway 8443)");
+
         var state = Path.Combine(temp, "auto-state");
         using (var engine = new LauncherEngine(profile, state))
         {

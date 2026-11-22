@@ -101,6 +101,7 @@ public sealed class LauncherEngine : IDisposable
         {
             ClientVersion = clientVersion,
             LauncherHome = home,
+            MaintenanceUrl = MaintenanceStatusUrl(root.ApiUrl),
             QQBindingEnabled = root.EnableQQBinding,
             RequireQQBinding = Profile.RequireQQBinding,
             AntiCheatEnabled = LauncherBuild.AntiCheat && Profile.AntiCheat is { Enabled: true }
@@ -108,6 +109,19 @@ public sealed class LauncherEngine : IDisposable
         Changed?.Invoke(State);
     }
     private void RefreshClientVersion() => clientVersion = InstalledClientVersion.Read(home, bootstrap);
+    // 维护状态由 nginx edge 托管，与 bootstrap 同源。取 API URL 的 origin + /status/maintenance.json。
+    internal static string MaintenanceStatusUrl(string apiUrl)
+    {
+        if (string.IsNullOrWhiteSpace(apiUrl)) return "";
+        try
+        {
+            var uri = new Uri(apiUrl);
+            // edge 在 443，ApiUrl 指向网关 8443；用 host（不含端口）+ 默认 443。
+            var scheme = uri.Scheme == "http" ? "http" : "https";
+            return $"{scheme}://{uri.Host}/status/maintenance.json";
+        }
+        catch { return ""; }
+    }
     public void Pause() => download?.Cancel();
     internal static bool SupportsContent(PlayerProfile profile) =>
         (string.IsNullOrEmpty(profile.MinimumLauncherVersion) || Version.Parse(VersionText) >= Version.Parse(profile.MinimumLauncherVersion)) &&
@@ -503,6 +517,32 @@ public sealed class LauncherEngine : IDisposable
 #if ANTICHEAT
         lock (guardLock) { guardClosing = true; guardLifetime.Cancel(); foreach (var session in protectedGames) session.Dispose(); protectedGames.Clear(); }
 #endif
+    }
+    // 维护模式：关闭本登录器启动的全部游戏进程（反作弊与普通路径都覆盖），
+    // 以及残留的 DNF.exe，释放 Script.pvf 文件句柄以便替换新 PVF。
+    public int KillGamesForMaintenance()
+    {
+        StopProtectedGames();
+        var killed = 0;
+        lock (games)
+        {
+            foreach (var (_, game) in games)
+            {
+                try { if (!game.HasExited) { game.Kill(entireProcessTree: true); killed++; } }
+                catch { /* already gone */ }
+                game.Dispose();
+            }
+            games.Clear();
+        }
+        // 兜底：清理不属于本登录器但残留的 DNF.exe（占用 PVF 文件句柄）。
+        foreach (var process in Process.GetProcessesByName("DNF"))
+        {
+            try { process.Kill(entireProcessTree: true); killed++; }
+            catch { /* already gone */ }
+            finally { process.Dispose(); }
+        }
+        diagnostics.Event("maintenance_kill_games", killed);
+        return killed;
     }
     public void Dispose() { StopProtectedGames(); download?.Cancel(); diagnostics.Dispose(); foreach (var (_, p) in games) p.Dispose(); operation.Dispose(); }
 }
