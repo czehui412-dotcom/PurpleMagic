@@ -13,7 +13,7 @@ namespace Dnf90.Launcher;
 
 public sealed class LauncherEngine : IDisposable
 {
-    public const string VersionText = "1.0.29";
+    public const string VersionText = "1.0.30";
     public const string ContentCapabilitiesHeader = "X-DNF90-Content-Capabilities";
     public const string ContentCapabilities = "native-plugins-v1";
     private readonly PlayerProfile root;
@@ -102,6 +102,7 @@ public sealed class LauncherEngine : IDisposable
             ClientVersion = clientVersion,
             LauncherHome = home,
             MaintenanceUrl = MaintenanceStatusUrl(root.ApiUrl),
+            MaintenanceCertSha = root.CertificateSha256,
             QQBindingEnabled = root.EnableQQBinding,
             RequireQQBinding = Profile.RequireQQBinding,
             AntiCheatEnabled = LauncherBuild.AntiCheat && Profile.AntiCheat is { Enabled: true }

@@ -147,6 +147,7 @@ class LauncherController extends ChangeNotifier {
   bool requireQQBinding = false;
   // 维护模式：从 edge 静态文件轮询，命中时关闭游戏并禁止登录。
   String maintenanceUrl = '';
+  String maintenanceCertSha = '';
   bool maintenanceActive = false;
   String maintenanceMessage = '';
   bool _maintenanceKilled = false;
@@ -306,6 +307,7 @@ class LauncherController extends ChangeNotifier {
     diagnosticType = diagnosticPrefs['problemType'] as String? ?? 'auto';
     diagnostics = state['diagnostics'] as Map<String, dynamic>? ?? const {};
     final newMaintUrl = state['maintenanceUrl'] as String? ?? '';
+    maintenanceCertSha = state['maintenanceCertSha'] as String? ?? '';
     if (newMaintUrl != maintenanceUrl) {
       maintenanceUrl = newMaintUrl;
       _startMaintenancePolling();
@@ -326,6 +328,13 @@ class LauncherController extends ChangeNotifier {
     if (_disposed || maintenanceUrl.isEmpty) return;
     try {
       final http = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+      // 服务器用自签名证书（指纹已在签名 profile 的 trust root 中）。只信任指纹
+      // 与 core 下发一致的连接，避免中间人伪造维护状态诱导关闭客户端。
+      http.badCertificateCallback = (cert, host, port) {
+        if (maintenanceCertSha.isEmpty) return false;
+        final fp = cert.sha256.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+        return fp == maintenanceCertSha.toLowerCase() && host == Uri.parse(maintenanceUrl).host;
+      };
       final uri = Uri.parse(maintenanceUrl);
       final req = await http.getUrl(uri).timeout(const Duration(seconds: 8));
       final resp = await req.close().timeout(const Duration(seconds: 8));

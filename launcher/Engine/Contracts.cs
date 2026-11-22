@@ -40,6 +40,7 @@ public sealed record State(string Phase, string Message, double Progress, long D
     public string BuildFlavor => LauncherBuild.Flavor;
     public bool AntiCheatEnabled { get; init; }
     public string MaintenanceUrl { get; init; } = "";
+    public string MaintenanceCertSha { get; init; } = "";
     public bool QQBindingEnabled { get; init; }
     public bool RequireQQBinding { get; init; }
     public DiagnosticStatus? Diagnostics { get; init; }
