@@ -14,7 +14,7 @@ namespace Dnf90.Launcher;
 
 public sealed class LauncherEngine : IDisposable
 {
-    public const string VersionText = "1.0.34";
+    public const string VersionText = "1.0.36";
     public const string ContentCapabilitiesHeader = "X-DNF90-Content-Capabilities";
     public const string ContentCapabilities = "native-plugins-v1";
     private readonly PlayerProfile root;
@@ -29,6 +29,7 @@ public sealed class LauncherEngine : IDisposable
     private UpdateEngine.Change[] changes = [];
     private string clientVersion = "";
     private readonly List<(string Account, Process Process)> games = [];
+    private readonly ProcessSupervisor processes = new();
 #if ANTICHEAT
     private readonly List<AntiCheatSession> protectedGames = [];
     private readonly object guardLock = new();
@@ -532,6 +533,7 @@ public sealed class LauncherEngine : IDisposable
             game = Process.Start(start) ?? throw new InvalidOperationException("游戏进程创建失败。");
 #endif
             games.Add((input.Account.Trim(), game));
+            processes.Track(game);
             diagnostics.Track(game, executable, handoffMode);
             diagnostics.Event("process_started", stageClock.Elapsed.TotalMilliseconds);
             localState.SetAccount(input.Account, State.Preferences.RememberAccount);
@@ -596,16 +598,10 @@ public sealed class LauncherEngine : IDisposable
     {
         StopProtectedGames(shuttingDown: false);
         var killed = 0;
-        lock (games)
-        {
-            foreach (var (_, game) in games)
-            {
-                try { if (!game.HasExited) { game.Kill(entireProcessTree: true); killed++; } }
-                catch { /* already gone */ }
-                game.Dispose();
-            }
-            games.Clear();
-        }
+        // 走统一治理器：优雅关 + 内核句柄等待，确保句柄真正释放后才返回，
+        // 否则紧接着登录会撞上残留 journal.json / 存活 DNF.exe 的误报。
+        processes.ShutdownSync();
+        lock (games) { killed = games.Count; games.Clear(); }
         // 兜底：清理不属于本登录器但残留的 DNF.exe（占用 PVF 文件句柄）。
         foreach (var process in Process.GetProcessesByName("DNF"))
         {
@@ -616,5 +612,5 @@ public sealed class LauncherEngine : IDisposable
         diagnostics.Event("maintenance_kill_games", killed);
         return killed;
     }
-    public void Dispose() { maintenanceStream?.Dispose(); StopProtectedGames(); download?.Cancel(); diagnostics.Dispose(); foreach (var (_, p) in games) p.Dispose(); operation.Dispose(); }
+    public void Dispose() { maintenanceStream?.Dispose(); StopProtectedGames(); processes.ShutdownSync(); download?.Cancel(); diagnostics.Dispose(); operation.Dispose(); }
 }

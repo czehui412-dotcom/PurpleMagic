@@ -331,7 +331,7 @@ class _PreviewHomeState extends State<PreviewHome> {
             const SizedBox(width: 10),
             _icon(
               Icons.remove_rounded,
-              '最小化到托盘',
+              '最小化',
               () => windowAction('minimize'),
             ),
             _icon(Icons.close_rounded, '关闭', () => windowAction('close')),

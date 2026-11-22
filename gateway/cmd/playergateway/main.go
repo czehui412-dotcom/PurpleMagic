@@ -72,7 +72,8 @@ func handlerWithHub(c config, hub *launcherhub.Hub, cdk http.Handler) http.Handl
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "no-store")
-		if r.URL.RawQuery != "" {
+		// The control stream uses ?since=<seq> for gap replay; allow it through.
+		if r.URL.RawQuery != "" && r.URL.Path != "/launcher/v2/control/stream" {
 			http.NotFound(w, r)
 			return
 		}

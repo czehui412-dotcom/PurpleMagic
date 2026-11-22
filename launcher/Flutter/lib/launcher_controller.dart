@@ -23,6 +23,10 @@ class AccountFailure implements Exception {
   String toString() => message;
 }
 
+/// Normal shutdown of an in-flight RPC. Callers ignore this instead of
+/// surfacing a stale "登录器已关闭" error after the window was closed.
+class CoreCancelled implements Exception {}
+
 abstract class CoreClient {
   void Function(Map<String, dynamic>)? onState;
   Future<Map<String, dynamic>> call(
@@ -54,7 +58,7 @@ class ProcessCoreClient extends CoreClient {
     );
     if (_disposed) {
       process.kill();
-      throw StateError('登录器已关闭。');
+      throw CoreCancelled();
     }
     _process = process;
     process.stdout
@@ -98,13 +102,20 @@ class ProcessCoreClient extends CoreClient {
     _pending.clear();
   }
 
+  void _failPendingCoreCancelled() {
+    for (final pending in _pending.values) {
+      if (!pending.isCompleted) pending.completeError(CoreCancelled());
+    }
+    _pending.clear();
+  }
+
   @override
   Future<Map<String, dynamic>> call(
     String method, [
     Map<String, dynamic>? args,
   ]) async {
     await _start();
-    if (_disposed) throw StateError('登录器已关闭。');
+    if (_disposed) throw CoreCancelled();
     final id = ++_sequence;
     final response = Completer<Map<String, dynamic>>();
     _pending[id] = response;
@@ -120,7 +131,7 @@ class ProcessCoreClient extends CoreClient {
     // EOF asks the host to cancel downloads and finish any atomic file commit.
     // Do not kill a helper that may be restoring a transaction.
     _process?.stdin.close();
-    _failPending('登录器已关闭。');
+    _failPendingCoreCancelled();
   }
 }
 

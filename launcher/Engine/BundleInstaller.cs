@@ -136,7 +136,9 @@ public static class BundleInstaller
             stage = "start-new-app";
             launched = Process.Start(start);
             stage = "wait-for-health";
-            for (var i = 0; i < 600; i++)
+            // Headless --update-health writes the receipt in well under a second;
+            // 15s is ample and avoids a minute-long stall when it genuinely fails.
+            for (var i = 0; i < 150; i++)
             {
                 if (File.Exists(health)) { Save(job with { Phase = "healthy" }); Outcome(job, release.Version, null, "healthy"); File.Delete(Path.Combine(job.InstallRoot, ".launcher-update.json")); return 0; }
                 if (launched is null || launched.HasExited) break;

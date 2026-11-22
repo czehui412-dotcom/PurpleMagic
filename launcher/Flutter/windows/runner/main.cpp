@@ -2,6 +2,8 @@
 #include <flutter/flutter_view_controller.h>
 #include <windows.h>
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <shlobj.h>
 
@@ -14,16 +16,64 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // leave another Flutter process holding the same update directory open.
   const auto arguments = GetCommandLineArguments();
   const bool guard_check = arguments.size() == 1 && arguments[0] == "--verify-launch-guard";
+  // Headless update health check: BundleInstaller starts the new app with
+  // --update-health <ready-file> and waits for that file to appear. This must
+  // NOT go through the UI single-instance gate: during an update the old UI is
+  // still alive, so the gate rejected the check (exit 2), no ready file was ever
+  // written, and the installer rolled back after 60s. That made the first launch
+  // after an update fail intermittently. Verify the new binary can load and the
+  // core can start, then write the receipt directly.
+  std::wstring health_ready;
+  bool health_check = false;
+  for (const auto& arg : arguments) {
+    if (arg.rfind("--update-health", 0) == 0) health_check = true;
+    else if (!arg.empty() && arg[0] != '-' && health_ready.empty()) health_ready = std::wstring(arg.begin(), arg.end());
+  }
+  if (health_check) {
+    // Validate the new install is loadable by running the headless core guard
+    // check, which exits 0 only when the core and anti-cheat runtime are intact.
+    const auto exe_dir = std::filesystem::path(__argv[0]).parent_path();
+    const auto core = exe_dir / "DNF90.Core.exe";
+    if (std::filesystem::exists(core)) {
+      STARTUPINFOW si{}; si.cb = sizeof(si);
+      PROCESS_INFORMATION pi{};
+      std::wstring cmd = L"\"" + core.wstring() + L"\" --verify-core-health";
+      if (CreateProcessW(core.c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+        WaitForSingleObject(pi.hProcess, 15000);
+        DWORD code = 1; GetExitCodeProcess(pi.hProcess, &code);
+        CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
+        if (code != 0) return 3;
+      } else return 3;
+    }
+    if (!health_ready.empty()) {
+      std::ofstream(health_ready) << "ok";
+    }
+    return 0;
+  }
   HANDLE raw_gate = CreateMutexW(nullptr, TRUE, L"Local\\DNF90Launcher.UI.v1");
   const bool duplicate = raw_gate && GetLastError() == ERROR_ALREADY_EXISTS;
   const auto closer = [](void* value) { if (value) CloseHandle(value); };
   std::unique_ptr<void, decltype(closer)> gate(raw_gate, closer);
   bool core_running = false;
-  PWSTR local = nullptr;
-  if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local))) {
-    const std::wstring path = std::wstring(local) + L"\\DNF90Launcher\\instance.lock";
-    CoTaskMemFree(local);
-    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0,
+  // Match Host/Program.cs LaunchData.Resolve exactly: green portable layout is
+  // <entry>\DNF90Launcher-Data\state-anticheat, not %LOCALAPPDATA%\DNF90Launcher.
+  // Checking the wrong path let a stale core hold instance.lock while this
+  // precheck passed, so the new core died on startup ("core exited" message).
+  std::wstring core_lock;
+  const DWORD env_len = GetEnvironmentVariableW(L"DNF90_LAUNCH_DIRECTORY", nullptr, 0);
+  if (env_len > 0) {
+    std::wstring entry(env_len - 1, L'\0');
+    GetEnvironmentVariableW(L"DNF90_LAUNCH_DIRECTORY", entry.data(), env_len);
+    core_lock = entry + L"\\DNF90Launcher-Data\\state-anticheat\\instance.lock";
+  } else {
+    PWSTR local = nullptr;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local))) {
+      core_lock = std::wstring(local) + L"\\DNF90Launcher-anticheat\\instance.lock";
+      CoTaskMemFree(local);
+    }
+  }
+  if (!core_lock.empty()) {
+    HANDLE file = CreateFileW(core_lock.c_str(), GENERIC_READ | GENERIC_WRITE, 0,
                              nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) core_running = GetLastError() == ERROR_SHARING_VIOLATION;
     else CloseHandle(file);

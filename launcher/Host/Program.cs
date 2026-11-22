@@ -27,6 +27,13 @@ if (args.Length == 2 && args[0] == "--apply-bundle")
     Environment.Exit(await BundleInstaller.Apply(job, profile)); return;
 }
 if (args.Length == 2 && args[0] == "--recover-bundle") { BundleInstaller.Recover(Path.GetFullPath(args[1])); return; }
+// Headless integrity probe used by --update-health. Must be cheap, touch no
+// state directory / instance lock, and exit 0 only when the new core is loadable.
+if (args.Length == 1 && args[0] == "--verify-core-health")
+{
+    profile.AntiCheat?.Validate();
+    Console.WriteLine("ok"); return;
+}
 // No HTTP listener or credentials in command-line arguments. Flutter is the sole
 // parent and sends bounded newline JSON through redirected process pipes.
 var data = args.Length == 2 && args[0] == "--state-directory"

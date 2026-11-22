@@ -314,12 +314,10 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     }
     return 0;
   }
-  if (message == WM_SIZE && wparam == SIZE_MINIMIZED && AddTrayIcon()) {
-    // Hide only after the tray entry exists. No WM_CLOSE/engine disposal: the
-    // core pipe, downloads and game protection remain alive while minimized.
-    ShowWindow(hwnd, SW_HIDE);
-    return 0;
-  }
+  // Minimization stays a real taskbar minimize. Hiding to the tray kept the
+  // core pipe and game alive while looking closed, so a later "reopen" just
+  // restored a stale process (old maintenance state / old binary). Let Windows
+  // handle SIZE_MINIMIZED normally so the window is visibly still running.
   if (message == WM_WINDOWPOSCHANGED && IsWindowVisible(hwnd) && !IsIconic(hwnd)) {
     // Also covers restoring the existing window by starting a second launcher.
     RemoveTrayIcon();

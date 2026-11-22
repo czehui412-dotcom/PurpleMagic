@@ -50,7 +50,8 @@ func readMaintenanceStatusFile() MaintenanceSnapshot {
 
 // BroadcastMaintenance fans out a maintenance change to every connected
 // launcher. Called in-process by the GM maintenance handler after the status
-// file has been written, so subscribers see the change immediately.
+// file has been written, so subscribers see the change immediately. Also emits
+// a signed control frame for clients that migrated to the control channel.
 func (h *Hub) BroadcastMaintenance(enabled bool, message, since string, kicked int) {
 	m := MaintenanceSnapshot{
 		Enabled: enabled, Message: message, Since: since, Kicked: kicked,
@@ -69,6 +70,7 @@ func (h *Hub) BroadcastMaintenance(enabled bool, message, since string, kicked i
 		default: // never block the GM request on a slow/stuck subscriber
 		}
 	}
+	h.BroadcastControl("maintenance", m)
 }
 
 // serveMaintenanceStream implements the SSE endpoint. It sends the current
