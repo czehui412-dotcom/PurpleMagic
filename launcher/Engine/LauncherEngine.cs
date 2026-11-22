@@ -14,7 +14,7 @@ namespace Dnf90.Launcher;
 
 public sealed class LauncherEngine : IDisposable
 {
-    public const string VersionText = "1.0.31";
+    public const string VersionText = "1.0.32";
     public const string ContentCapabilitiesHeader = "X-DNF90-Content-Capabilities";
     public const string ContentCapabilities = "native-plugins-v1";
     private readonly PlayerProfile root;
@@ -132,7 +132,21 @@ public sealed class LauncherEngine : IDisposable
         if (string.IsNullOrEmpty(url)) return new(false, "");
         try
         {
-            using var http = new HttpClient(LauncherBundleDownloader.CreateHandler(root)) { Timeout = TimeSpan.FromSeconds(10) };
+            // 不能用 CreateHandler：其 CertificateAllowed 要求 uri.Port == ApiUrl.Port(8443)，
+            // 而维护状态在 edge 443，端口不等会退化成系统 CA 校验 → 自签名证书失败 →
+            // 异常被吞、永远 active:false（服务端踢人成功但客户端不退出、不显示维护）。
+            // 这里直接 pin 到 profile 信任根，只校验 host + 证书 SHA-256，不比端口。
+            var uri = new Uri(url);
+            using var handler = new HttpClientHandler
+            {
+                UseProxy = false, AllowAutoRedirect = false,
+                ServerCertificateCustomValidationCallback = (req, cert, _, errors) =>
+                    req.RequestUri is { } r && cert is not null && r.Host == uri.Host
+                    && errors.HasFlag(System.Net.Security.SslPolicyErrors.RemoteCertificateNameMismatch) == false
+                    && Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(cert.RawData))
+                        .Equals(root.CertificateSha256, StringComparison.OrdinalIgnoreCase)
+            };
+            using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
             using var resp = await http.GetAsync(url);
             if (!resp.IsSuccessStatusCode) return new(false, "");
             using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
