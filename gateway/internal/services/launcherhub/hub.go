@@ -53,6 +53,10 @@ type Hub struct {
 	state     persisted
 	failures  map[string][]time.Time
 	gmCookies map[string]*http.Cookie
+	// maintenance SSE subscribers. BroadcastMaintenance and the SSE handler
+	// run in this same PlayerGateway process, so no cross-process bus is needed.
+	maintenance     MaintenanceSnapshot
+	maintenanceSubs map[chan MaintenanceSnapshot]struct{}
 	// HTTP client construction is replaceable only by in-package isolated tests.
 	sourceClient func(Source) *http.Client
 }
@@ -336,6 +340,10 @@ func (h *Hub) publish(id string) (Bootstrap, error) {
 }
 func (h *Hub) PublicHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == maintenanceEventPath {
+			h.serveMaintenanceStream(w, r)
+			return
+		}
 		if r.URL.RawQuery == "" && r.URL.RawPath == "" && (r.Method == "GET" || r.Method == "HEAD") && (h.serveBundle(w, r) || h.serveContentBlob(w, r)) {
 			return
 		}

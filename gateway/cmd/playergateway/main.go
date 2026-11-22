@@ -255,6 +255,12 @@ func runGateway(ctx context.Context, c config) error {
 		}
 		defer module.Close()
 	}
+	// The GM maintenance handler (GatewayHandler) and the launcher SSE hub live
+	// in this same process. Wire the change callback so maintenance opens/closes
+	// are pushed to every connected launcher immediately.
+	if hub != nil && module != nil {
+		module.SetMaintenanceNotifier(hub.BroadcastMaintenance)
+	}
 	if c.BootstrapListen != "" {
 		listener, e := bootstrap(ctx, c.BootstrapListen, c.BootstrapTarget)
 		if e != nil {

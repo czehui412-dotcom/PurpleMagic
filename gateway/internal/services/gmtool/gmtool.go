@@ -146,8 +146,18 @@ type Server struct {
 	questIndexMu sync.Mutex
 	questIndex   *questDiskIndex
 
+	// onMaintenance notifies the in-process launcher SSE broadcaster after the
+	// authoritative status file has been mirrored. Injected by the host at
+	// startup; nil in standalone GM service and in isolated tests.
+	onMaintenance func(enabled bool, message, since string, kicked int)
+
 	stopOnce sync.Once
 	ownsDB   bool
+}
+
+// SetMaintenanceNotifier installs the in-process maintenance change callback.
+func (s *Server) SetMaintenanceNotifier(fn func(enabled bool, message, since string, kicked int)) {
+	s.onMaintenance = fn
 }
 
 // New 构造 GM 面板；未配置监听地址或密码时返回 nil, nil。

@@ -41,6 +41,9 @@ public sealed record State(string Phase, string Message, double Progress, long D
     public string BuildFlavor => LauncherBuild.Flavor;
     public bool AntiCheatEnabled { get; init; }
     public string MaintenanceUrl { get; init; } = "";
+    // Pushed by the gateway SSE stream; authoritative for the maintenance UI.
+    public bool MaintenanceActive { get; init; }
+    public string MaintenanceMessage { get; init; } = "";
     public bool QQBindingEnabled { get; init; }
     public bool RequireQQBinding { get; init; }
     public DiagnosticStatus? Diagnostics { get; init; }

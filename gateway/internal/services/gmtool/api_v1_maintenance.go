@@ -67,6 +67,11 @@ func (s *Server) v1Maintenance(w http.ResponseWriter, r *http.Request) {
 		}})
 		return
 	}
+	// Push the change to every connected launcher immediately. This runs in the
+	// same PlayerGateway process as the launcher SSE hub, so no extra hop.
+	if s.onMaintenance != nil {
+		s.onMaintenance(st.Enabled, st.Message, st.Since, st.Kicked)
+	}
 	v1Reply(w, r, http.StatusOK, v1Envelope{Data: map[string]any{"maintenance": st}})
 }
 

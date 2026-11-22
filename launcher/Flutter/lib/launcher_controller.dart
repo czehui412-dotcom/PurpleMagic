@@ -145,11 +145,10 @@ class LauncherController extends ChangeNotifier {
       antiCheatEnabled && antiCheatConsentVersion != antiCheatDisclosureVersion;
   bool qqBindingEnabled = false;
   bool requireQQBinding = false;
-  // 维护模式：从 edge 静态文件轮询，命中时关闭游戏并禁止登录。
+  // 维护模式：由网关 SSE 主动推送到 core，core 写入 State 后在此消费。
   String maintenanceUrl = '';
   bool maintenanceActive = false;
   String maintenanceMessage = '';
-  Timer? _maintenanceTimer;
   final _accountCooldowns = <String, DateTime>{};
   int accountCooldown(String account) {
     final remaining =
@@ -304,40 +303,12 @@ class LauncherController extends ChangeNotifier {
     diagnosticConsentVersion = diagnosticPrefs['consentVersion'] as int? ?? 0;
     diagnosticType = diagnosticPrefs['problemType'] as String? ?? 'auto';
     diagnostics = state['diagnostics'] as Map<String, dynamic>? ?? const {};
-    final newMaintUrl = state['maintenanceUrl'] as String? ?? '';
-    if (newMaintUrl != maintenanceUrl) {
-      maintenanceUrl = newMaintUrl;
-      _startMaintenancePolling();
-    }
+    maintenanceUrl = state['maintenanceUrl'] as String? ?? '';
+    maintenanceActive = state['maintenanceActive'] == true;
+    maintenanceMessage = state['maintenanceMessage'] as String? ?? '';
 
     connected = true;
     notifyListeners();
-  }
-
-  void _startMaintenancePolling() {
-    _maintenanceTimer?.cancel();
-    if (maintenanceUrl.isEmpty) return;
-    _pollMaintenance();
-    _maintenanceTimer = Timer.periodic(const Duration(seconds: 30), (_) => _pollMaintenance());
-  }
-
-  Future<void> _pollMaintenance() async {
-    if (_disposed || maintenanceUrl.isEmpty) return;
-    try {
-      // core 用签名信任根校验证书读取状态；维护开启时由 core 关闭游戏进程。
-      final result = await client.call('checkMaintenance');
-      final maint = result['maintenance'] as Map<String, dynamic>? ?? {};
-      final active = maint['active'] == true;
-      final msg = maint['message'] as String? ?? '服务器维护中，请稍后再试';
-      if (_disposed) return;
-      if (active != maintenanceActive || msg != maintenanceMessage) {
-        maintenanceActive = active;
-        maintenanceMessage = msg;
-        notifyListeners();
-      }
-    } catch (_) {
-      // 网络抖动时保持上一次状态，不误报维护。
-    }
   }
 
   Future<void> initialize() async {
@@ -513,7 +484,6 @@ class LauncherController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    _maintenanceTimer?.cancel();
     client.dispose();
     super.dispose();
   }

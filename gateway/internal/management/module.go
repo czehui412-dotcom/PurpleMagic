@@ -240,3 +240,12 @@ func (m *Module) Close() error {
 func (m *Module) HubSessionGuard(next http.Handler) http.Handler {
 	return m.server.HubHandler(next)
 }
+
+// SetMaintenanceNotifier wires the in-process GM maintenance change callback
+// to the launcher SSE broadcaster. The host calls this after both the module
+// and the launcher Hub have been constructed.
+func (m *Module) SetMaintenanceNotifier(fn func(enabled bool, message, since string, kicked int)) {
+	if m != nil && m.server != nil {
+		m.server.SetMaintenanceNotifier(fn)
+	}
+}

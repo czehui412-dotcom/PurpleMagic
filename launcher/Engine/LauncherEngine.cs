@@ -14,7 +14,7 @@ namespace Dnf90.Launcher;
 
 public sealed class LauncherEngine : IDisposable
 {
-    public const string VersionText = "1.0.32";
+    public const string VersionText = "1.0.33";
     public const string ContentCapabilitiesHeader = "X-DNF90-Content-Capabilities";
     public const string ContentCapabilities = "native-plugins-v1";
     private readonly PlayerProfile root;
@@ -37,6 +37,9 @@ public sealed class LauncherEngine : IDisposable
 #endif
     private readonly DiagnosticService diagnostics;
     private readonly LocalStateStore localState;
+    private readonly MaintenanceStream? maintenanceStream;
+    private bool maintenanceActive;
+    private string maintenanceMessage = "";
     public event Action<State>? Changed;
     private State state = new("ready", "正在读取本机状态…", 0, 0, 0, false, false, false, "本服批准源", "", new(), []);
     public State State { get => state with { Diagnostics = diagnostics?.Status }; private set => state = value; }
@@ -57,6 +60,8 @@ public sealed class LauncherEngine : IDisposable
         RecycleStalePortablePayloads();
         RefreshClientVersion();
         Emit("ready", previousUpdateFailure ?? "客户端已就绪。");
+        // Gateway pushes maintenance changes over SSE; no client-side polling.
+        maintenanceStream = new MaintenanceStream(root.ApiUrl, root.CertificateSha256, (active, message) => ApplyMaintenance(active, message));
     }
 
     // A user-picked directory (persisted in identity.json) overrides the
@@ -103,6 +108,8 @@ public sealed class LauncherEngine : IDisposable
             ClientVersion = clientVersion,
             LauncherHome = home,
             MaintenanceUrl = MaintenanceStatusUrl(root.ApiUrl),
+            MaintenanceActive = maintenanceActive,
+            MaintenanceMessage = maintenanceMessage,
             QQBindingEnabled = root.EnableQQBinding,
             RequireQQBinding = Profile.RequireQQBinding,
             AntiCheatEnabled = LauncherBuild.AntiCheat && Profile.AntiCheat is { Enabled: true }
@@ -153,18 +160,29 @@ public sealed class LauncherEngine : IDisposable
             var el = doc.RootElement;
             var active = el.TryGetProperty("enabled", out var e) && e.ValueKind == JsonValueKind.True;
             var msg = el.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String ? (m.GetString() ?? "") : "";
-            var killed = 0;
-            if (active && !maintenanceKilled)
-            {
-                killed = KillGamesForMaintenance();
-                maintenanceKilled = true;
-            }
-            else if (!active) maintenanceKilled = false;
+            var killed = ApplyMaintenance(active, msg);
             return new(active, msg, killed);
         }
         catch { return new(false, ""); }
     }
     private bool maintenanceKilled;
+    // Applies a maintenance state from the gateway SSE push (primary) or the
+    // one-shot file check (fallback). Game kill is idempotent via maintenanceKilled.
+    private int ApplyMaintenance(bool active, string message)
+    {
+        var killed = 0;
+        if (active && !maintenanceKilled)
+        {
+            killed = KillGamesForMaintenance();
+            maintenanceKilled = true;
+        }
+        else if (!active) maintenanceKilled = false;
+        maintenanceActive = active;
+        maintenanceMessage = active && !string.IsNullOrWhiteSpace(message) ? message : "";
+        State = State with { MaintenanceActive = maintenanceActive, MaintenanceMessage = maintenanceMessage };
+        Changed?.Invoke(State);
+        return killed;
+    }
     public void Pause() => download?.Cancel();
     internal static bool SupportsContent(PlayerProfile profile) =>
         (string.IsNullOrEmpty(profile.MinimumLauncherVersion) || Version.Parse(VersionText) >= Version.Parse(profile.MinimumLauncherVersion)) &&
@@ -589,5 +607,5 @@ public sealed class LauncherEngine : IDisposable
         diagnostics.Event("maintenance_kill_games", killed);
         return killed;
     }
-    public void Dispose() { StopProtectedGames(); download?.Cancel(); diagnostics.Dispose(); foreach (var (_, p) in games) p.Dispose(); operation.Dispose(); }
+    public void Dispose() { maintenanceStream?.Dispose(); StopProtectedGames(); download?.Cancel(); diagnostics.Dispose(); foreach (var (_, p) in games) p.Dispose(); operation.Dispose(); }
 }
