@@ -23,4 +23,17 @@ internal static class MaintenanceChecks
         stop.Invoke(engine, [true]);
         check(closing.GetValue(engine) is true, "real shutdown still closes the guard");
     }
+
+    // An anti-cheat game is attached via GetProcessById, where reading
+    // .SafeHandle/.ExitCode throws "Process was not started by this object".
+    // The identity-based helpers must work on any PID, including one this test
+    // did not start. Use the current process (never stop it) to prove that.
+    internal static void AttachedProcessIdentity(Action<bool, string> check)
+    {
+        using var attached = System.Diagnostics.Process.GetProcessById(Environment.ProcessId);
+        var created = BundleProcesses.CreatedTicks(attached.Id);
+        check(created > 0, "kernel creation time works on an attached process");
+        var code = BundleProcesses.ExitCodeByIdentity(attached.Id); // running: no exit code yet, must not throw
+        check(code == -1 || code == 259, "kernel exit code read on attached process does not throw");
+    }
 }

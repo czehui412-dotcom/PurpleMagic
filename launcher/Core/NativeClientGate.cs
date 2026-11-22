@@ -29,7 +29,16 @@ public static class NativeClientGate
         using var file = File.OpenRead(executable);
         if (!compatibility.Allows(Convert.ToHexString(SHA256.HashData(file))))
             throw new InvalidDataException("客户端文件已改变，请恢复匹配版本后重试。");
-        return ReleaseExactMutex(existing.Id, existing.StartTime.ToUniversalTime().ToFileTimeUtc(), executable, GateName);
+        // existing comes from Process.GetProcessesByName: reading .StartTime throws
+        // "Process was not started by this object". Query the kernel handle instead.
+        long created;
+        using (var handle = OpenProcess(0x1000, false, existing.Id)) // PROCESS_QUERY_LIMITED_INFORMATION
+        {
+            if (handle.IsInvalid || !GetProcessTimes(handle, out var started, out _, out _, out _))
+                throw new InvalidOperationException("无法确认已有客户端的启动时间，请先关闭游戏后重试。");
+            created = started;
+        }
+        return ReleaseExactMutex(existing.Id, created, executable, GateName);
     }
 
     internal static int ReleaseExactMutex(int pid, long expectedStart, string executable, string mutexName)

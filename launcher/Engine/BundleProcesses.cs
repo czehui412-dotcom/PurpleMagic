@@ -101,6 +101,47 @@ internal static class BundleProcesses
     // The caller owns this Process.Start handle for the replacement UI.
     internal static Task StopLaunched(Process process) => Stop(process, process.SafeHandle);
 
+    // Stops a process by identity (PID + creation ticks) using a kernel handle,
+    // so it also works for anti-cheat games attached via Process.GetProcessById.
+    // Reading .SafeHandle on those throws "Process was not started by this
+    // object", which broke maintenance kill and shutdown.
+    internal static async Task StopByIdentity(int pid, long started)
+    {
+        if (pid <= 0 || started <= 0) return;
+        using var handle = OpenForWait(pid);
+        if (handle.IsInvalid) return;
+        try
+        {
+            if (!GetProcessTimes(handle, out var created, out _, out _, out _)) return;
+            if (DateTime.FromFileTimeUtc(created).Ticks != started) return; // PID recycled: never touch it.
+            if (FullyExited(handle)) return;
+            using var process = Process.GetProcessById(pid);
+            await Stop(process, handle);
+        }
+        catch (ArgumentException) { /* exited between open and lookup */ }
+    }
+
+    // Creation time via kernel handle, works for attached processes too.
+    internal static long CreatedTicks(int pid)
+    {
+        using var handle = OpenForWait(pid);
+        if (handle.IsInvalid || !GetProcessTimes(handle, out var created, out _, out _, out _)) return 0;
+        return DateTime.FromFileTimeUtc(created).Ticks;
+    }
+
+    // Exit code via a kernel handle. Process.ExitCode throws for processes not
+    // started by this object (anti-cheat attach), so never read it directly.
+    internal static int ExitCodeByIdentity(int pid)
+    {
+        if (pid <= 0) return -1;
+        using var handle = OpenForWait(pid);
+        if (handle.IsInvalid) return -1;
+        var code = 0;
+        return GetExitCodeProcess(handle, out code) ? code : -1;
+    }
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetExitCodeProcess(SafeProcessHandle handle, out int code);
+
     private static async Task Stop(Process process, SafeProcessHandle handle)
     {
         try

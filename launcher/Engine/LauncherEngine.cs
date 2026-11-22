@@ -14,7 +14,7 @@ namespace Dnf90.Launcher;
 
 public sealed class LauncherEngine : IDisposable
 {
-    public const string VersionText = "1.0.36";
+    public const string VersionText = "1.0.37";
     public const string ContentCapabilitiesHeader = "X-DNF90-Content-Capabilities";
     public const string ContentCapabilities = "native-plugins-v1";
     private readonly PlayerProfile root;
@@ -239,7 +239,11 @@ public sealed class LauncherEngine : IDisposable
         download = null;
         RequireNoGames();
         using var own = Process.GetCurrentProcess();
-        var job = new BundleJob(install, package, Convert.ToBase64String(envelope!), ui.Id, ui.StartTime.ToUniversalTime().Ticks, own.Id, own.StartTime.ToUniversalTime().Ticks, work, "downloaded");
+        // GetProcessById/GetCurrentProcess are attached objects: their .StartTime
+        // can throw "Process was not started by this object". Use kernel handles.
+        var uiStarted = BundleProcesses.CreatedTicks(ui.Id);
+        var ownStarted = BundleProcesses.CreatedTicks(own.Id);
+        var job = new BundleJob(install, package, Convert.ToBase64String(envelope!), ui.Id, uiStarted, own.Id, ownStarted, work, "downloaded");
         var jobFile = Path.Combine(work, "job.json"); SafeFiles.Atomic(jobFile, JsonSerializer.SerializeToUtf8Bytes(job, WireJson.Default.BundleJob));
         var helper = Path.Combine(install, "update-helper.exe"); SafeFiles.NoLinks(helper); File.Copy(Environment.ProcessPath!, helper, true);
         var start = new ProcessStartInfo(helper) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = install };
@@ -540,7 +544,13 @@ public sealed class LauncherEngine : IDisposable
             Emit("logging-in", "游戏进程已创建，正在等待客户端启动…");
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
             try { await game.WaitForExitAsync(timeout.Token); } catch (OperationCanceledException) when (timeout.IsCancellationRequested) { }
-            if (game.HasExited) throw new InvalidOperationException($"客户端提前退出（代码 {game.ExitCode}），请等待约 20 秒后重试。");
+            if (game.HasExited)
+            {
+                // game may be an anti-cheat attach (GetProcessById); its .ExitCode
+                // throws "Process was not started by this object". Read via kernel handle.
+                var code = BundleProcesses.ExitCodeByIdentity(game.Id);
+                throw new InvalidOperationException($"客户端提前退出（代码 {code}），请等待约 20 秒后重试。");
+            }
 #if ANTICHEAT
             guard = null;
 #endif
