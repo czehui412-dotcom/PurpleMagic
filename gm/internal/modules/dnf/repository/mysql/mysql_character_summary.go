@@ -94,15 +94,31 @@ func (s *mysqlCharStore) SummariesForAccounts(ctx context.Context, ids []string)
 }
 
 func (s *mysqlCharStore) SearchSummaries(ctx context.Context, query, after string, limit int) ([]repository.CharacterSummary, error) {
+	exact := strings.HasPrefix(query, "\x01")
+	if exact {
+		query = strings.TrimPrefix(query, "\x01")
+	}
 	if limit < 1 || limit > 101 || len(query) > 128 || len(after) > 128 || !utf8.ValidString(query) || !utf8.ValidString(after) {
 		return nil, repository.ErrCharacterSummaryRange
 	}
-	pattern := "%" + strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(query) + "%"
 	out := []repository.CharacterSummary{}
 	seen := map[string]bool{}
+	where := "delete_flag=0 AND BINARY character_id > ?"
+	args := make([]any, 0, 5)
+	args = append(args, after)
+	if exact {
+		// 精确模式：角色名 / 角色ID 完全一致
+		where += " AND (name=? OR BINARY character_id=?)"
+		args = append(args, query, query)
+	} else {
+		pattern := "%" + strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(query) + "%"
+		where += " AND (name LIKE ? ESCAPE '!' OR BINARY character_id=?)"
+		args = append(args, pattern, query)
+	}
+	args = append(args, limit)
 	for _, database := range s.router.readDBs {
 		table := mysqlTable(database, s.router.tablePrefix, mysqlCharTable)
-		rows, err := s.router.db.QueryContext(ctx, "SELECT "+summaryColumns+" FROM "+table+" WHERE delete_flag=0 AND BINARY character_id > ? AND (name LIKE ? ESCAPE '!' OR BINARY character_id=?) ORDER BY BINARY character_id LIMIT ?", after, pattern, query, limit)
+		rows, err := s.router.db.QueryContext(ctx, "SELECT "+summaryColumns+" FROM "+table+" WHERE "+where+" ORDER BY BINARY character_id LIMIT ?", args...)
 		if err != nil {
 			return nil, err
 		}

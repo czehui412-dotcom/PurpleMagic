@@ -76,10 +76,16 @@ func (s *Server) v1Accounts(w http.ResponseWriter, r *http.Request) {
 	query := s.v1AccountSelect() + " WHERE a.id>?"
 	args := []any{id}
 	if q.Q != "" {
-		pattern := "%" + strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(q.Q) + "%"
-		query += " AND (a.account LIKE ? ESCAPE '!' OR a.account_id LIKE ? ESCAPE '!' OR a.id=?)"
 		panel, _ := strconv.ParseInt(q.Q, 10, 64)
-		args = append(args, pattern, pattern, panel)
+		if isV1Exact(q) {
+			// 精确查询：账号名 / 账号ID 完全一致（不做子串匹配）
+			query += " AND (a.account=? OR BINARY a.account_id=? OR a.id=?)"
+			args = append(args, q.Q, q.Q, panel)
+		} else {
+			pattern := "%" + strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(q.Q) + "%"
+			query += " AND (a.account LIKE ? ESCAPE '!' OR a.account_id LIKE ? ESCAPE '!' OR a.id=?)"
+			args = append(args, pattern, pattern, panel)
+		}
 	}
 	if state != "" {
 		query += " AND COALESCE(p.disabled,0)=?"
@@ -191,7 +197,12 @@ func (s *Server) v1Characters(w http.ResponseWriter, r *http.Request) {
 		s.v1Unavailable(w, r, err)
 		return
 	}
-	characters, err := reader.SearchSummaries(r.Context(), q.Q, after, q.Limit+1)
+	searchQ := q.Q
+	if isV1Exact(q) {
+		// 精确意图通过内部前缀传给仓储层（repository 接口签名不变，避免波及全部 mock/test）
+		searchQ = v1ExactPrefix + q.Q
+	}
+	characters, err := reader.SearchSummaries(r.Context(), searchQ, after, q.Limit+1)
 	if err != nil {
 		s.v1Unavailable(w, r, err)
 		return

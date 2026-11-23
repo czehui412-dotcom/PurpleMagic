@@ -41,6 +41,8 @@ export function PlayerPicker({
 }) {
   const live = useLive();
   const [q, setQ] = useState("");
+  // 查询维度：账号 / 角色；均为精确查询（不做模糊子串匹配）
+  const [pickField, setPickField] = useState<"account" | "character">("character");
   const [quickResult, setQuickResult] = useState<{
     characters: Character[];
     accounts: Account[];
@@ -69,7 +71,7 @@ export function PlayerPicker({
     const timer = setTimeout(() => {
       void live
         .guard(async () => {
-          const res = await live.quickSearch(trimmed, ctrl.signal);
+          const res = await live.quickSearch(trimmed, ctrl.signal, true, pickField);
           if (!ctrl.signal.aborted) setQuickResult(res);
         })
         .finally(() => {
@@ -80,7 +82,7 @@ export function PlayerPicker({
       clearTimeout(timer);
       ctrl.abort();
     };
-  }, [live, q]);
+  }, [live, q, pickField]);
 
   const isQuickMode = !!live && !!q.trim();
   const rows = isQuickMode
@@ -93,11 +95,19 @@ export function PlayerPicker({
         }
         return [...byId.values()];
       })()
-    : state.characters.filter((c) =>
-        `${c.name} ${c.id} ${state.accounts.find((a) => a.id === c.accountId)?.name}`
-          .toLowerCase()
-          .includes(q.toLowerCase()),
-      );
+    : state.characters.filter((c) => {
+        const needle = q.trim().toLowerCase();
+        if (!needle) return true;
+        const accountName = state.accounts.find((a) => a.id === c.accountId)?.name || "";
+        if (pickField === "account") {
+          // 账号维度：按账号名 / 账号ID 精确匹配
+          return (
+            accountName.toLowerCase() === needle || c.accountId.toLowerCase() === needle
+          );
+        }
+        // 角色维度：按角色名 / 角色ID 精确匹配
+        return c.name.toLowerCase() === needle || c.id.toLowerCase() === needle;
+      });
 
   const displayAccounts: Account[] = isQuickMode
     ? (() => {
@@ -121,19 +131,38 @@ export function PlayerPicker({
         }
         return [...map.values()];
       })()
-    : state.accounts.filter((a) =>
-        q.trim()
-          ? rows.some((c) => c.accountId === a.id) ||
-            `${a.name} ${a.id}`.toLowerCase().includes(q.toLowerCase())
-          : rows.some((c) => c.accountId === a.id),
-      );
+    : state.accounts.filter((a) => {
+        const needle = q.trim().toLowerCase();
+        if (!needle) return rows.some((c) => c.accountId === a.id);
+        if (pickField === "account") {
+          return a.name.toLowerCase() === needle || a.id.toLowerCase() === needle;
+        }
+        return rows.some((c) => c.accountId === a.id);
+      });
 
   const recent = state.api?.recentCharacters || [];
 
   return (
     <>
+      <Tabs
+        label="查询维度"
+        items={[
+          { id: "character", label: "按角色查询" },
+          { id: "account", label: "按账号查询" },
+        ]}
+        value={pickField}
+        onChange={(v) => {
+          setPickField(v);
+          setQ("");
+          setQuickResult(null);
+        }}
+      />
       <SearchField
-        placeholder="同时搜索角色名、账号名、ID 或绑定 QQ 号"
+        placeholder={
+          pickField === "account"
+            ? "输入完整账号名或账号ID（精确匹配）"
+            : "输入完整角色名或角色ID（精确匹配）"
+        }
         value={q}
         onChange={setQ}
       />
@@ -273,13 +302,20 @@ export function PlayerPicker({
       </div>
       {searching && !displayAccounts.length && <LoadingSkeleton rows={3} />}
       {!searching && !displayAccounts.length && (
-        <Empty title="没有匹配的角色或账号" detail="可输入角色名、账号名、ID 或绑定 QQ 号检索" />
+        <Empty
+          title="没有匹配的结果"
+          detail={
+            pickField === "account"
+              ? "请输入完整的账号名或账号ID（精确匹配，不做模糊搜索）"
+              : "请输入完整的角色名或角色ID（精确匹配，不做模糊搜索）"
+          }
+        />
       )}
       {!isQuickMode && (
         <LoadMore
           show={!!state.api?.directory.next}
           onClick={() =>
-            void live?.guard(() => live.directory("characters", q, true))
+            void live?.guard(() => live.directory("characters", q, true, "", "all", true))
           }
         />
       )}
@@ -327,7 +363,7 @@ export function Players(props: PageProps & { accountMode?: boolean }) {
     writeDirectoryMemory(live, { mode, q, accountId: accountScope, online });
     if (!live) return;
     const timer = setTimeout(
-      () => void live.guard(() => live.directory(mode, q, false, accountScope, online)),
+      () => void live.guard(() => live.directory(mode, q, false, accountScope, online, true)),
       220,
     );
     return () => {
@@ -343,9 +379,13 @@ export function Players(props: PageProps & { accountMode?: boolean }) {
       return;
     }
     if (!live) {
+      const needle = trimmed.toLowerCase();
       setCrossCharacters(
         state.characters
-          .filter((c) => `${c.name} ${c.id}`.toLowerCase().includes(trimmed.toLowerCase()))
+          .filter(
+            (c) =>
+              c.name.toLowerCase() === needle || c.id.toLowerCase() === needle,
+          )
           .slice(0, 8),
       );
       return;
@@ -353,7 +393,7 @@ export function Players(props: PageProps & { accountMode?: boolean }) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => {
       void live.http
-        .get<any[]>(query("/api/v1/characters", { q: trimmed, limit: 8 }), ctrl.signal)
+        .get<any[]>(query("/api/v1/characters", { q: trimmed, limit: 8, exact: 1 }), ctrl.signal)
         .then(({ data }) => {
           if (!ctrl.signal.aborted) {
             setCrossCharacters(
@@ -383,16 +423,25 @@ export function Players(props: PageProps & { accountMode?: boolean }) {
       (online === "all" ||
         (c.online !== null && (online === "online") === c.online)) &&
       (!!live ||
-        `${c.name} ${c.job} ${c.id} ${c.accountId} ${state.accounts.find((a) => a.id === c.accountId)?.name}`
-          .toLowerCase()
-          .includes(q.toLowerCase())),
+        (() => {
+          const needle = q.trim().toLowerCase();
+          if (!needle) return true;
+          // 演示模式（无后端）也按当前维度精确匹配：角色名 / 角色ID / 账号ID
+          return (
+            mode === "characters"
+              ? c.name.toLowerCase() === needle || c.id.toLowerCase() === needle
+              : c.accountId.toLowerCase() === needle
+          );
+        })()),
   );
   const accounts = state.accounts.filter((a) =>
     live
       ? state.api?.directory.accountIds.includes(a.id)
       : q.trim()
-        ? `${a.name} ${a.id}`.toLowerCase().includes(q.toLowerCase()) ||
-          rows.some((c) => c.accountId === a.id)
+        ? (mode === "accounts"
+            ? a.name.toLowerCase() === q.trim().toLowerCase() ||
+              a.id.toLowerCase() === q.trim().toLowerCase()
+            : false) || rows.some((c) => c.accountId === a.id)
         : rows.some((c) => c.accountId === a.id),
   );
   const selected = resolveRecipients(state, selection);
@@ -420,8 +469,8 @@ export function Players(props: PageProps & { accountMode?: boolean }) {
           <h2>{accountMode ? "账号与角色目录" : "查找一位冒险家"}</h2>
           <p>
             {accountMode
-              ? "查看账号归属、角色信息与共享资产"
-              : "按账号、角色名或 ID 查询，选定后进入角色工作区"}
+              ? "按账号或角色维度精确查询，查看账号归属、角色信息与共享资产"
+              : "按账号或角色维度精确查询，选定后进入角色工作区"}
           </p>
         </div>
         <Pill>
@@ -443,7 +492,7 @@ export function Players(props: PageProps & { accountMode?: boolean }) {
           }}
         />
         <SearchField
-          placeholder="账号 / 角色名 / ID"
+          placeholder={mode === "accounts" ? "输入账号名或账号ID（精确匹配）" : "输入角色名或角色ID（精确匹配）"}
           value={q}
           onChange={setQ}
         />

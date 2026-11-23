@@ -483,6 +483,7 @@ export class ConsoleAPI {
     more = false,
     accountId = "",
     online = "all",
+    exact = false,
   ) {
     const signal = this.signal("directory");
     const old = this.meta.directory;
@@ -503,6 +504,7 @@ export class ConsoleAPI {
               q,
               limit: 20,
               cursor,
+              ...(exact && q.trim() ? { exact: 1 } : {}),
               ...(mode === "characters" && online !== "all" ? { online } : {}),
             });
       const accept = (r: import("./http").Envelope<DTO[]>) => {
@@ -512,6 +514,7 @@ export class ConsoleAPI {
         const filteredRows = (r.data || []).filter(
           (v) =>
             !accountId ||
+            exact ||
             `${v.name} ${v.characterId}`
               .toLowerCase()
               .includes(q.toLowerCase()),
@@ -749,7 +752,7 @@ export class ConsoleAPI {
     }
     return chars;
   }
-  async quickSearch(q: string, signal?: AbortSignal): Promise<{
+  async quickSearch(q: string, signal?: AbortSignal, exact = false, field: "all" | "account" | "character" = "all"): Promise<{
     characters: Character[];
     accounts: Account[];
     qqMatches: { qq: string; accountId: string; accountName: string }[];
@@ -759,21 +762,26 @@ export class ConsoleAPI {
     if (!keyword) {
       return { characters: [], accounts: [], qqMatches: [], accountRoles: {} };
     }
-    const isNumericQQ = /^\d{5,12}$/.test(keyword) && this.meta.features["qqBinding.read"] !== false;
+    const isNumericQQ = !exact && field === "all" && /^\d{5,12}$/.test(keyword) && this.meta.features["qqBinding.read"] !== false;
+    const exactParam = exact ? { exact: 1 } : {};
     const [charRes, accRes, presRes, qqRes] = await Promise.all([
-      this.http.get<DTO[]>(query("/api/v1/characters", { q: keyword, limit: 12 }), signal),
-      this.http.get<DTO[]>(query("/api/v1/accounts", { q: keyword, limit: 8 }), signal),
+      field === "account"
+        ? Promise.resolve(null)
+        : this.http.get<DTO[]>(query("/api/v1/characters", { q: keyword, limit: 12, ...exactParam }), signal),
+      field === "character"
+        ? Promise.resolve(null)
+        : this.http.get<DTO[]>(query("/api/v1/accounts", { q: keyword, limit: 8, ...exactParam }), signal),
       this.http.get("/api/v1/presence", signal).catch(() => null),
       isNumericQQ ? this.http.get<DTO>(query("/api/v1/anti-cheat/qq/bindings", { search: keyword, offset: 0 }), signal).catch(() => null) : Promise.resolve(null),
     ]);
     if (signal?.aborted) return { characters: [], accounts: [], qqMatches: [], accountRoles: {} };
     const onlineSet = presRes?.data?.characterIds ? new Set<string>(presRes.data.characterIds) : null;
-    const chars = (charRes.data || []).map((v) => {
+    const chars = (charRes?.data || []).map((v) => {
       const c = characterDTO(v, this.state.characters.find((x) => x.id === String(v.characterId)));
       return onlineSet ? { ...c, online: onlineSet.has(c.id) } : c;
     });
     const accMap = new Map<string, Account>();
-    for (const v of accRes.data || []) {
+    for (const v of accRes?.data || []) {
       const a: Account = {
         ...this.ingestAccountDTO(v, this.state.accounts.find((x) => x.id === v.accountId)),
         ...(v.currency ? { points: safeNumber(v.currency.balance), rawPoints: v.currency.balance } : {}),
@@ -811,7 +819,7 @@ export class ConsoleAPI {
         } catch {}
       }),
     );
-    for (const v of charRes.data || []) {
+    for (const v of charRes?.data || []) {
       if (!v?.accountId || accMap.has(v.accountId)) continue;
       const fromSummary = this.ingestCharacterAccount(
         v,

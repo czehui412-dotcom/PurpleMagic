@@ -156,29 +156,35 @@ func (s *Server) v1Accounts(w http.ResponseWriter, r *http.Request) {
 	query := s.v1AccountSelect() + " WHERE a.id>?"
 	args := []any{id}
 	if q.Q != "" {
-		pattern := "%" + strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(q.Q) + "%"
 		panel, _ := strconv.ParseInt(q.Q, 10, 64)
-		var charAccounts []string
-		if matcher, ok := reader.(interface {
-			AccountIDsByCharacterQuery(context.Context, string, int) ([]string, error)
-		}); ok {
-			if matched, e := matcher.AccountIDsByCharacterQuery(r.Context(), q.Q, 100); e == nil {
-				charAccounts = matched
-			}
-		}
-		if len(charAccounts) > 0 {
-			marks := strings.TrimSuffix(strings.Repeat("?,", len(charAccounts)), ",")
-			query += " AND (a.account LIKE ? ESCAPE '!' OR a.account_id LIKE ? ESCAPE '!' OR a.id=? OR (a.account_id IN (" + marks + ") AND BINARY a.account_id IN (" + marks + ")))"
-			args = append(args, pattern, pattern, panel)
-			for _, accID := range charAccounts {
-				args = append(args, accID)
-			}
-			for _, accID := range charAccounts {
-				args = append(args, accID)
-			}
+		if isV1Exact(q) {
+			// 精确查询：账号名 / 账号ID 完全一致（不做子串匹配，也不做角色名反查）
+			query += " AND (a.account=? OR BINARY a.account_id=? OR a.id=?)"
+			args = append(args, q.Q, q.Q, panel)
 		} else {
-			query += " AND (a.account LIKE ? ESCAPE '!' OR a.account_id LIKE ? ESCAPE '!' OR a.id=?)"
-			args = append(args, pattern, pattern, panel)
+			pattern := "%" + strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(q.Q) + "%"
+			var charAccounts []string
+			if matcher, ok := reader.(interface {
+				AccountIDsByCharacterQuery(context.Context, string, int) ([]string, error)
+			}); ok {
+				if matched, e := matcher.AccountIDsByCharacterQuery(r.Context(), q.Q, 100); e == nil {
+					charAccounts = matched
+				}
+			}
+			if len(charAccounts) > 0 {
+				marks := strings.TrimSuffix(strings.Repeat("?,", len(charAccounts)), ",")
+				query += " AND (a.account LIKE ? ESCAPE '!' OR a.account_id LIKE ? ESCAPE '!' OR a.id=? OR (a.account_id IN (" + marks + ") AND BINARY a.account_id IN (" + marks + ")))"
+				args = append(args, pattern, pattern, panel)
+				for _, accID := range charAccounts {
+					args = append(args, accID)
+				}
+				for _, accID := range charAccounts {
+					args = append(args, accID)
+				}
+			} else {
+				query += " AND (a.account LIKE ? ESCAPE '!' OR a.account_id LIKE ? ESCAPE '!' OR a.id=?)"
+				args = append(args, pattern, pattern, panel)
+			}
 		}
 	}
 	if state != "" {
@@ -323,8 +329,12 @@ func (s *Server) v1Characters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var characters []repository.CharacterSummary
+	searchQ := q.Q
+	if isV1Exact(q) {
+		searchQ = v1ExactPrefix + q.Q
+	}
 	if status == "" {
-		characters, err = reader.SearchSummaries(r.Context(), q.Q, after, q.Limit+1)
+		characters, err = reader.SearchSummaries(r.Context(), searchQ, after, q.Limit+1)
 	} else {
 		presenceReader, ok := reader.(interface {
 			SearchSummariesByPresence(context.Context, string, string, int, []string, bool) ([]repository.CharacterSummary, error)
@@ -342,7 +352,7 @@ func (s *Server) v1Characters(w http.ResponseWriter, r *http.Request) {
 		for _, member := range snapshot.Members {
 			ids = append(ids, strconv.FormatUint(uint64(member.CharacterID), 10))
 		}
-		characters, err = presenceReader.SearchSummariesByPresence(r.Context(), q.Q, after, q.Limit+1, ids, status == "online")
+		characters, err = presenceReader.SearchSummariesByPresence(r.Context(), searchQ, after, q.Limit+1, ids, status == "online")
 	}
 	if err != nil {
 		s.v1Unavailable(w, r, err)

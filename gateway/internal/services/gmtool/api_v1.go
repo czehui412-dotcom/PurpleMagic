@@ -64,6 +64,8 @@ func (s *Server) v1Routes() http.Handler {
 	writes.HandleFunc("POST /api/v1/maintenance", s.v1Maintenance)
 	mux.HandleFunc("GET /api/v1/paodian", s.v1Paodian)
 	writes.HandleFunc("POST /api/v1/paodian", s.v1Paodian)
+	mux.HandleFunc("GET /api/v1/online-benefit", s.v1OnlineBenefit)
+	writes.HandleFunc("POST /api/v1/online-benefit", s.v1OnlineBenefit)
 	mux.HandleFunc("GET /api/v1/characters/{characterId}/rename-operations", s.v1RenameLog)
 	writes.HandleFunc("POST /api/v1/characters/{characterId}/rename-operations/preview", s.v1RenameOperation)
 	writes.HandleFunc("POST /api/v1/characters/{characterId}/rename-operations", s.v1RenameOperation)
@@ -233,13 +235,20 @@ func v1ParseQuery(r *http.Request, extra ...string) (v1Query, error) {
 	if err != nil {
 		return q, err
 	}
-	allowed := map[string]bool{"q": true, "limit": true, "cursor": true}
+	allowed := map[string]bool{"q": true, "limit": true, "cursor": true, "exact": true}
 	for _, key := range extra {
 		allowed[key] = true
 	}
 	for key, values := range values {
 		if !allowed[key] || len(values) != 1 {
 			return q, errors.New("unknown or duplicate query field")
+		}
+	}
+	if raw, ok := values["exact"]; ok {
+		switch raw[0] {
+		case "", "1", "0", "true", "false":
+		default:
+			return q, errors.New("invalid exact flag")
 		}
 	}
 	q.Values = values
@@ -255,6 +264,17 @@ func v1ParseQuery(r *http.Request, extra ...string) (v1Query, error) {
 		}
 	}
 	return q, nil
+}
+
+// v1ExactPrefix 是 handler 与 mysql 仓储层之间的内部约定：query 以此开头表示精确匹配。
+// 用户输入的 q 不含 NUL 控制符（v1ParseQuery 已校验），故此前缀不会与真实输入冲突。
+const v1ExactPrefix = "\x01"
+
+// isV1Exact 判断查询是否要求精确匹配（exact=1）。精确模式下前端已按"账号/角色"维度
+// 分别调用对应端点，服务端只做完全一致匹配，不做 LIKE 子串匹配。
+func isV1Exact(q v1Query) bool {
+	v := q.Values.Get("exact")
+	return v == "1" || v == "true"
 }
 
 type v1Cursor struct {

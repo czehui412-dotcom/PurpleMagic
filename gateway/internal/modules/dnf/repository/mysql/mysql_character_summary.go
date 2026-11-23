@@ -114,11 +114,15 @@ func (s *mysqlCharStore) SearchSummariesByPresence(ctx context.Context, query, a
 }
 
 func (s *mysqlCharStore) searchSummaries(ctx context.Context, query, after string, limit int, ids []string, presenceClause string) ([]repository.CharacterSummary, error) {
+	exact := strings.HasPrefix(query, "\x01")
+	if exact {
+		query = strings.TrimPrefix(query, "\x01")
+	}
 	if limit < 1 || limit > 101 || len(query) > 128 || len(after) > 128 || !utf8.ValidString(query) || !utf8.ValidString(after) {
 		return nil, repository.ErrCharacterSummaryRange
 	}
 	pattern := ""
-	if query != "" {
+	if query != "" && !exact {
 		pattern = "%" + strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(query) + "%"
 	}
 	out := []repository.CharacterSummary{}
@@ -134,8 +138,14 @@ func (s *mysqlCharStore) searchSummaries(ctx context.Context, query, after strin
 			shardLimit = limit + 8
 		}
 		if query != "" {
-			where += " AND (name LIKE ? ESCAPE '!' OR (character_id=? AND BINARY character_id=?) OR (account_id=? AND BINARY account_id=?))"
-			args = append(args, pattern, query, query, query, query)
+			if exact {
+				// 精确模式：角色名 / 角色ID / 账号ID 完全一致
+				where += " AND (name=? OR (character_id=? AND BINARY character_id=?) OR (account_id=? AND BINARY account_id=?))"
+				args = append(args, query, query, query, query, query)
+			} else {
+				where += " AND (name LIKE ? ESCAPE '!' OR (character_id=? AND BINARY character_id=?) OR (account_id=? AND BINARY account_id=?))"
+				args = append(args, pattern, query, query, query, query)
+			}
 		}
 		for _, id := range ids {
 			args = append(args, id)
